@@ -1,5 +1,6 @@
 # Master-Thesis
-Code used for the analysis of my master thesis with the topic: Global patterns and drivers of plant diversity in deserts.
+R-Code used for the analysis of my master thesis with the topic: Global patterns and drivers of plant diversity in deserts.
+
 
 
 Structure:
