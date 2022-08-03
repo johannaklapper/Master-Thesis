@@ -1,0 +1,900 @@
+---
+title: "B1_NonGiftChecklist_1"
+author: "Johanna Klapper"
+date: "4/4/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading packages
+```{r, message=FALSE}
+library(tidyverse)
+library(readxl)
+```
+
+In this script, the checklists that are not yet in GIFT will be prepared to be later on merged together.
+For this, the following steps will be necessary:
+  - add column with desert/area name
+  - remove unused columns (columns with no values in all checklists)
+  - adjust column names
+  - some checklists have to be manually adjusted, e.g. China with cm and m values
+  
+The following columns will be used for the dataset:
+  - desert
+  - species
+  - native
+  - endemic
+  - alien
+  - growth_form
+  - lifecycle
+  - lifeform
+  - liana
+  - climber
+  - aquatic
+  - succulence
+  - plant_height_min
+  - plant_height_max
+  - rhizome_length
+  - min_elevation
+  - max_elevation
+  - blooming_season
+  - habitat
+
+# Checklists (not in GIFT format)
+
+## China
+
+```{r}
+china <- read_excel(here::here('./data/checklists/original/China.xlsx'), sheet = 2)
+```
+
+The minimum and maximum height of plants have some cm and m values in them, with the following code I'm transforming cm into m
+```{r}
+min_height <- str_split_fixed(china$plant_height_min, " ", n = 2) %>% 
+  as_tibble() %>% 
+  rename(height = V1,
+         unit = V2)
+
+china_2 <- bind_cols(china, min_height)
+
+china_21 <- china_2 %>% 
+  filter(unit == "cm") %>% 
+  mutate(height = parse_number(height),
+    height = height * 0.01)
+
+china_22 <- china_2 %>% 
+  filter(unit != "cm") %>% 
+  mutate(height = parse_number(height))
+
+china_3 <- bind_rows(china_21, china_22) %>% 
+  select(-c(plant_height_min, unit, plant_height_max)) %>% 
+  rename(plant_height_min = height)
+
+
+
+max_height <- str_split_fixed(china$plant_height_max, " ", n = 2) %>% 
+  as_tibble() %>% 
+  rename(height = V1,
+         unit = V2)
+
+china_4 <- bind_cols(china, max_height)
+
+china_41 <- china_4 %>% 
+  filter(unit == "cm") %>% 
+  mutate(height = parse_number(height),
+         height = height * 0.01) %>% 
+  select(-plant_height_max)
+
+china_42 <- china_4 %>% 
+  filter(unit != "cm") %>% 
+  mutate(height = parse_number(height))
+
+china_5 <- bind_rows(china_41, china_42) %>% 
+  select(-c(plant_height_max, unit, plant_height_min)) %>% 
+  rename(plant_height_max = height) 
+
+
+
+china_6 <- full_join(china_3, (china_5 %>% select(plant_height_max, species_fullname)), by = "species_fullname")
+```
+
+
+```{r}
+china_proc <- china_6 %>% 
+  mutate(desert = "China",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA) %>% 
+  mutate_at(c("endemic", "native"), as.character) %>% 
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = species_fullname,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         liana = Liana,
+         climber = Climber,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_ Chinese`))
+```
+
+
+
+## China - Tengger Desert
+
+```{r}
+china_tengger <- read_excel(here::here("./data/checklists/original/China_TenggerDesert.xlsx"), sheet = 2)
+```
+
+```{r}
+china_tengger_proc <- china_tengger %>% 
+  mutate(desert = "China_TenggerDesert",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+
+## Egypt Wadi Allaqi
+
+```{r}
+egypt <- read_excel(here::here("./data/checklists/original/Egypt_Wadi_Allaqi.xlsx"), sheet = 2)
+```
+
+```{r}
+egypt_proc <- egypt %>% 
+  mutate(desert = "Egypt",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+
+## Iran Fereizi
+
+```{r}
+iran_fereizi <- read_excel(here::here("./data/checklists/original/Iran_Fereizi.xlsx"), sheet = 2)
+```
+
+```{r}
+iran_fereizi_proc <- iran_fereizi %>% 
+  mutate(desert = "Iran Fereizi",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+## Iran Heydari Wildlife Refuge
+
+```{r}
+iran_heydari <- read_excel(here::here("./data/checklists/original/Iran_Heydari_Wildlife_Refuge.xlsx"), sheet = 2)
+```
+
+```{r}
+iran_heydari_proc <- iran_heydari %>% 
+  mutate(desert = "Iran Heydari",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+## Iran Isfahan Province
+
+```{r}
+iran_isfahan <- read_excel(here::here("./data/checklists/original/Iran_Isfahan_Province.xlsx"), sheet = 2)
+```
+
+```{r}
+iran_isfahan_proc <- iran_isfahan %>% 
+  mutate(desert = "Iran Isfahan Province",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+## Iran Kavir Protected Region
+
+```{r}
+iran_kavir <- read_excel(here::here("./data/checklists/original/Iran_Kavir_Protected_Region.xlsx"), sheet = 2)
+```
+
+```{r}
+iran_kavir_proc <- iran_kavir %>% 
+  mutate(desert = "Iran Kavir Region",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+## Iran Sistan Baluchestan Province
+
+```{r}
+iran_sistan_baluchestan <- read_excel(here::here("./data/checklists/original/Iran_Sistan_Baluchestan_Province.xlsx"), sheet = 2)
+```
+
+```{r}
+iran_sistan_baluchestan_proc <- iran_sistan_baluchestan %>% 
+  mutate(desert = "Iran Sistan Baluchestan Province",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+## Iran Southern Khorasan
+
+```{r}
+iran_southern_khorasan <- read_excel(here::here("./data/checklists/original/Iran_Southern_Khorasan.xlsx"), sheet = 2)
+```
+
+```{r}
+iran_southern_khorasan_proc <- iran_southern_khorasan %>% 
+  mutate(desert = "Iran Southern Khorasan",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+## Iran Touran Protected Area
+
+```{r}
+iran_touran <- read_excel(here::here("./data/checklists/original/Iran_Touran_Protected_Area.xlsx"), sheet = 2)
+```
+
+```{r}
+iran_touran_proc <- iran_touran %>% 
+  mutate(desert = "Iran Touran Area",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+## Iran Yahya Abad
+
+```{r}
+iran_yahya_abad <- read_excel(here::here("./data/checklists/original/Iran_YahyaAbad.xlsx"), sheet = 2)
+```
+
+```{r}
+iran_yahya_abad_proc <- iran_yahya_abad %>% 
+  mutate(desert = "Iran Yahya Abad",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+## Libya Tanezzuft
+
+```{r}
+libya_tanezzuft <- read_excel(here::here("./data/checklists/original/Libya_Tanezzuft.xlsx"), sheet = 1)
+```
+
+```{r}
+libya_tanezzuft_proc <- libya_tanezzuft %>% 
+  mutate(desert = "Libya_Tanezzuft",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon, `JarJar Amma`, Tanezzuft))
+```
+
+
+## Mauritania Assaba
+
+```{r}
+mauritania <- read_excel(here::here("./data/checklists/original/Mauritania_Assaba.xlsx"), sheet = 2)
+```
+
+```{r}
+mauritania_proc <- mauritania %>% 
+  mutate(desert = "Mauritania_Assaba",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+## Mexican Coahuila - Sierra de la Paila
+
+```{r}
+mexico_paila <- read_excel(here::here("./data/checklists/original/MexicanCoahuila_SierraDeLaPaila.xlsx"), sheet = 2)
+```
+
+```{r}
+mexico_paila_proc <- mexico_paila %>% 
+  mutate(desert = "MexicanCoahuila_SierraDeLaPaila",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+## Mexican Coahuila - Sierra de la Zapalina
+
+```{r}
+mexico_zapalina <- read_excel(here::here("./data/checklists/original/MexicanCoahuila_SierraDeLaZapalina.xlsx"), sheet = 2)
+```
+
+```{r}
+mexico_zapalina_proc <- mexico_zapalina %>% 
+  mutate(desert = "MexicanCoahuila_SierraDeLaZapalina",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+## Namib Desert
+
+```{r}
+namib <- read_excel(here::here("./data/checklists/original/Namib_Desert.xlsx"), sheet = 1)
+```
+
+```{r}
+namib_proc <- namib %>% 
+  mutate(desert = "NamibDesert",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%
+  rename(species = species_original,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic,
+         endemic = endemicndendemicmic) %>%   
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  select(-c(root_depth_min, root_depth_max, full_description, `full_description_translated`, species_full_name, genus, species_epithet, author, subtaxon, Photosynthetic_pathway))
+```
+
+
+
+## Namib Desert - Gobabeb
+
+```{r}
+namib_gobabeb <- read_excel(here::here("./data/checklists/original/NamibDesert_Gobabeb.xlsx"), sheet = 1)
+```
+
+```{r}
+namib__gobabeb_proc <- namib_gobabeb %>% 
+  unite(species, c(Species, Author), sep = " ") %>% 
+  mutate(desert = "NamibDesert_Gobabeb",
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         liana = NA,
+         climber = NA,
+         endemic = NA,
+         native = NA,
+         growth_form = NA,
+         lifecycle = NA,
+         aquatic = NA,
+         plant_height_min = NA,
+         plant_height_max = NA,
+         succulence = NA) %>%
+  rename(lifeform = Perennial,
+         habitat = Habitat,
+         alien = Alien) %>%   
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  select(-Family)
+```
+
+
+
+## North America - Sonoran Desert
+
+```{r}
+sonoran <- read_excel(here::here("./data/checklists/original/NorthAmerica_Sonoran_Desert.xlsx"), sheet = 4)
+```
+
+```{r}
+sonoran_proc <- sonoran %>%
+  select(-species) %>% 
+  mutate(desert = "NorthAmerica_SonoranDesert",
+         alien = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%
+  rename(species = species_orig,
+         native = native...3,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>%   
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  select(-c(list_ID, species_full:`1.5.1`))
+```
+
+
+
+## North America - Great Basin
+
+```{r}
+greatbasin <- read_excel(here::here("./data/checklists/original/NorthAmerica_Great_Basin.xlsx"), sheet = 2)
+```
+
+```{r}
+greatbasin_proc <- greatbasin %>% 
+  mutate(desert = "NorthAmerica_GreatBasin",
+         alien = NA,
+         rhizome_length = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic,
+         habitat = `habitat/notes`,
+         blooming_season = `blooming season`) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon)) %>% 
+  mutate(min_elevation = 0.3048 * min_elevation,
+         max_elevation = 0.3048 * max_elevation)
+```
+
+
+
+## Peru
+
+```{r}
+peru <- read.csv(here::here("./data/checklists/original/Peru.csv"))
+```
+
+```{r}
+peru_proc <- peru %>% 
+  mutate(desert = "Peru",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA,
+         endemic = NA,
+         native = NA,
+         growth_form = NA,
+         lifecycle = NA,
+         aquatic = NA,
+         lifeform = NA,
+         plant_height_min = NA,
+         plant_height_max = NA,
+         succulence = NA) %>% 
+  mutate_at(c("endemic", "native"), as.character) %>% 
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = Name) %>% 
+  select(-NameID)
+```
+
+
+
+## Sahara Desert - Air Massif
+
+```{r}
+airmassif <- read_excel(here::here("./data/checklists/original/Sahara_Desert_Aïr_Massif.xlsx"), sheet = 2)
+```
+
+```{r}
+airmassif_proc <- airmassif %>% 
+  mutate(desert = "SaharaDesert_AirMassif",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>% 
+  mutate_at(c("endemic", "native"), as.character) %>% 
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+## Sahara Desert 
+
+```{r}
+sahara <- read_excel(here::here("./data/checklists/original/Sahara_Desert.xlsx"), sheet = 2)
+```
+
+```{r}
+sahara_proc <- sahara %>% 
+  mutate(desert = "SaharaDesert",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+## Sahara Desert - Jebel Uweinat
+
+```{r}
+jebel <- read_excel(here::here("./data/checklists/original/Sahara_Desert_Jebel_Uweinat.xlsx"))
+```
+
+```{r}
+jebel_proc <- jebel %>% 
+  mutate(desert = "SaharaDesert_JebelUweinat",
+         alien = NA,
+         rhizome_length = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA,
+         endemic = NA,
+         native = NA,
+         growth_form = NA,
+         lifecycle = NA,
+         aquatic = NA,
+         plant_height_min = NA,
+         plant_height_max = NA,
+         succulence = NA) %>% 
+  rename(species = Species,
+         lifeform = Biological_type) %>% 
+  select(-c(Family, Grazed)) %>% 
+  separate(col = Elevation_range, c('min_elevation', 'max_elevation')) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric)
+```
+
+
+## Sudan - Khartoum State
+
+```{r}
+sudan <- read_excel(here::here("./data/checklists/original/Sudan_Khartoum_State.xlsx"), sheet = 2)
+```
+
+```{r}
+sudan_proc <- sudan %>% 
+  mutate(desert = "Sudan_KhartoumState",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+## Tibesti
+
+```{r}
+tibesti <- read_excel(here::here("./data/checklists/original/Tibesti.xlsx"), sheet = 2)
+```
+
+```{r}
+tibesti_proc <- tibesti %>% 
+  mutate(desert = "Tibesti",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA,
+         lifeform = NA,
+         lifecycle = NA,
+         aquatic = NA,
+         plant_height_min = NA,
+         plant_height_max = NA,
+         succulence = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = species_full)
+```
+
+
+## Uzbekistan - Vozrozhdeniya Island
+
+```{r}
+uzbekistan <- read_excel(here::here("./data/checklists/original/Uzbekistan_Vozrozhdeniya_Island.xlsx"), sheet = 2)
+```
+
+```{r}
+uzbekistan_proc <- uzbekistan %>% 
+  mutate(desert = "Uzbekistan_VozrozhdeniyaIsland",
+         alien = NA,
+         rhizome_length = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA) %>%  
+  mutate_at(c("endemic", "native"), as.character) %>%
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  rename(species = `species_full name`,
+         growth_form = Growth_form,
+         lifecycle = Lifecycle,
+         lifeform = Lifeform,
+         aquatic = Aquatic) %>% 
+  select(-c(root_depth_min, root_depth_max,`Photosynthetic pathway`, full_description, `full_description_translated`, species_original, genus, species_epithet, author, subtaxon))
+```
+
+
+
+
+# Binding processed datasets
+
+In this section, I will bind the datasets that now have the same amount and names of columns. The function 'bind_rows' from the dplyr package will be used as for this function the datasets do not have to have the same order of columns.
+
+```{r}
+data_full <- mget(ls(envir = globalenv(), pattern = "proc$")) %>% 
+  bind_rows()
+```
+
+The columns that will be needed to split the names and do some formatting have to be added:
+"species" (already exists)
+"species_full" 
+"genus"
+"cf_genus"
+"species_epithet"
+"cf_species"
+"author"
+"subtaxon"
+"subt_author"
+"hybrid"
+
+```{r}
+data_full <- data_full %>% 
+  mutate(species_full = species,
+         genus = NA,
+         cf_genus = NA,
+         species_epithet = NA,
+         cf_species = NA,
+         author = NA,
+         subtaxon = NA,
+         subt_author = NA,
+         hybrid = NA,
+         species = NA)
+```
+
+# Save the dataset
+```{r}
+write.csv(data_full, here::here("./data/checklists/processed/data_full.csv"), row.names = FALSE)
+```
+
+
+
+# Load data in case of any changes later on
+```{r}
+#data_full <- read.csv(here::here("./data/checklists/processed/data_full.csv"))
+```
+
+

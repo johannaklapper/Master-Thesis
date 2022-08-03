@@ -1,0 +1,330 @@
+---
+title: "DesertMapping"
+author: "Johanna Klapper"
+date: "4/28/2022"
+output: html_document
+---
+
+This Markdown contains:
+- area analysis for desert definitions
+- area analysis for checklists and regions
+- map plotting of desert definitions, checklists and regions
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Load packages
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(sp)
+library(rgdal)
+library(raster)
+library(sf)
+library(ggthemes)
+library(rnaturalearth)
+library(rnaturalearthdata)
+```
+
+
+# Load data
+```{r}
+# Coastlines of the world
+world_coast <- ne_coastline(scale = "medium", returnclass = "sf")
+
+# coarse arid raster file
+arid_coarse <- raster(here::here("data/gis_data/global-ai_et0/ai_et0/arid_coarse.tif"))
+
+# Polygons data
+polygons_data <- read_sf(here::here("./data/analysis/polygons_data.shp"))
+
+# Biomes
+biomes <- read_sf(here::here("data/gis_data/biomes/Ecoregions2017/Ecoregions2017.shp"))
+```
+
+
+
+# Data preparation
+
+## Limit biomes to desert biome
+```{r}
+# Visualize biomes
+desert_biomes <- biomes[biomes$BIOME_NUM == 13, ] %>% 
+  st_make_valid()
+```
+
+## Transform aridity raster into shapefile
+```{r}
+# prepare aridity raster to plot with ggplot
+library(stars)
+arid_plot <- read_stars(here::here("./data/gis_data/global-ai_et0/ai_et0/arid_coarse.tif"))
+arid_sf <- st_as_sf(arid_plot, as_points = FALSE, merge = TRUE)
+```
+
+## Intersect areas of both definitions
+```{r}
+# prepare spatial data to create one shapefile for each definition and their overlap
+desert_biomes_raster <- rasterize(desert_biomes, arid_coarse)
+
+# Overlap
+desert_both_raster <- mask(arid_coarse, desert_biomes_raster)
+desert_both <- st_intersection(arid_sf, desert_biomes)
+
+# Only aridity
+arid_only <- mask(arid_coarse, as_Spatial(desert_biomes), inverse = TRUE)
+arid_only_sf <- raster::rasterToPolygons(arid_only) %>% 
+  st_as_sf()
+
+# only biome
+biome_only <- mask(desert_biomes_raster, as_Spatial(arid_sf), inverse = TRUE)
+biome_only_sf <- raster::rasterToPolygons(biome_only) %>% 
+  st_as_sf()
+```
+
+## Combine polygons to one layer/raster
+```{r}
+one_polygon <- st_make_valid(polygons_data) %>% 
+  st_union() %>% 
+  st_as_sf()
+
+one_polygon %>% 
+  st_make_valid() %>% 
+  st_area()
+
+polygon_raster <- sf::as_Spatial(one_polygon) %>% 
+  rasterize(y = arid_coarse)
+```
+
+
+## Combine areas of both definitions
+```{r}
+deserts <- rbind(desert_biomes$geometry, arid_sf$geometry)
+deserts <- summarise(deserts)
+```
+
+
+# Data analysis
+
+## Area of each definition
+```{r}
+arid_sf %>% 
+  st_union() %>% 
+  st_area()
+# 4.194556e+13 [m^2]
+
+desert_biomes %>% 
+  st_union() %>% 
+  st_area()
+#2.632273e+13 [m^2]
+
+desert_both_sf %>% 
+  st_make_valid() %>% 
+  st_union() %>% 
+  st_area()
+#2.511461e+13 [m^2]
+```
+
+
+## Number of checklists per region
+```{r}
+polygons_data %>% 
+  distinct(desert, .keep_all = TRUE) %>% 
+  group_by(contnnt) %>% 
+  summarise(n = n())
+
+#Asia	41			
+#North Africa	18			
+#North America	48			
+#Oceania	22			
+#South Africa	5		
+#South America	29
+```
+
+
+## Calculating the percentage of coverage of checklists for biome and arid regions
+
+### Aridity
+```{r}
+cov_arid_ch <- mask(crop(polygon_raster, arid_coarse), arid_coarse) 
+  
+area_arid_ch <- as.data.frame(cov_arid_ch, na.rm = TRUE) %>%
+      tally() %>%
+      mutate(area = n * res(cov_arid_ch)[1] * res(cov_arid_ch)[2]) %>% 
+      dplyr::select(area)
+
+area_arid_ch$area / area_arid$area
+
+# 0.3528407 (of arid areas covered)
+```
+
+### Biome
+```{r}
+cov_biome_ch <- mask(crop(polygon_raster, desert_biomes_raster), desert_biomes_raster) 
+  
+area_biome_ch <- as.data.frame(cov_biome_ch, na.rm = TRUE) %>%
+      tally() %>%
+      mutate(area = n * res(cov_biome_ch)[1] * res(cov_biome_ch)[2]) %>% 
+      dplyr::select(area)
+
+#area_pol_biome <- sum(unlist(area_biome_ch))
+
+area_biome_ch$area / area_biome$area
+
+# 0.4825926 (of biome areas covered)
+```
+
+### Overlap
+```{r}
+cov_both_ch <- mask(crop(polygon_raster, desert_both_raster), desert_both_raster) 
+  
+area_both_ch <- as.data.frame(cov_both_ch, na.rm = TRUE) %>%
+      tally() %>%
+      mutate(area = n * res(cov_both_ch)[1] * res(cov_both_ch)[2]) %>% 
+      dplyr::select(area)
+
+#area_pol_biome <- sum(unlist(area_biome_ch))
+
+area_both_ch$area / area_both$area
+
+# 0.4983129 (of both areas covered)
+```
+
+
+
+## Area per region
+```{r}
+polygon_region <- polygons_data %>% 
+  st_make_valid() %>% 
+  group_by(contnnt) %>% 
+  summarize() %>% 
+  st_make_valid()
+
+polygon_region$area <- st_area(polygon_region$geometry)
+area_sum <- sum(polygon_region$area)
+
+polygon_region$perc <- polygon_region$area / area_sum
+```
+
+
+## Region area of earth's surface
+```{r}
+polygon_region$reg.perc.earth <- sapply(polygon_region$area, function(x) {x / 1.5e+14})
+```
+
+
+# Plotting
+
+
+
+## Aridity, Biome and Checklists
+```{r}
+ggplot()+
+  geom_sf(aes(fill = "Biome"), data = biome_only_sf$geometry, col = "transparent") +
+  geom_sf(aes(fill = "Aridity"), data = arid_only_sf$geometry, col = "transparent")+
+  geom_sf(aes(fill = "Overlap"), data = desert_both$geometry, col = "transparent")+
+  scale_fill_manual(values = c("#1B9E77", "#7570B3", "#D95F02")) +
+  geom_sf(data = world_coast, col = "grey70", size = 0.3) +
+  geom_sf(data = polygons_data, aes(geometry = geometry, color = "Checklists"), size = 0.75, fill = "transparent") +
+  scale_color_manual(values = c(Checklists = "grey30")) +
+  theme_bw() +
+  labs(fill = "Desert definition", color = "") +
+  theme(axis.title = element_text(size = 12),
+        panel.border = element_blank(),
+        legend.title = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        legend.position = "bottom") +
+  coord_sf(crs = "+proj=moll +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+```
+
+```{r}
+ggsave("figure1.png", last_plot(), device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+
+## Checklists as assigned to main regions
+
+### Preparation of island checklists
+```{r}
+# determine centroids of islands for plotting
+islands <- polygons_data %>% 
+  filter(islnd_m == "Island") %>% 
+  st_centroid()
+```
+
+### Summarize checklist shapefile per region
+```{r}
+region.shp <- polygons_data %>% 
+  st_make_valid() %>% 
+  group_by(contnnt) %>% 
+  summarize()
+```
+
+### Color scale for plotting
+```{r}
+col.islands <- scales::brewer_pal("qual", palette = "Dark2")
+col.islands(6)
+col.islands <- c("#1B9E77", "#D95F02", "#7570B3", "#66A61E", "#E6AB02")
+col.cont <- c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02")
+
+```
+
+### Plotting
+```{r}
+ggplot()+
+  geom_sf(data = world_coast, col = "grey30", size = 0.3) +
+  geom_sf(data = region.shp, aes(geometry = geometry, fill = contnnt), alpha = 0.5) +
+  geom_sf(data = polygons_data, aes(geometry = geometry, col = contnnt), size = 0.6, fill = "transparent") +
+  geom_sf(data = islands, aes(col = contnnt), shape = 1, stroke = 1.5, size = 2.5, show.legend = FALSE) +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_color_brewer(palette = "Dark2") +
+  theme_bw() +
+  theme(axis.title = element_blank(),
+        panel.border = element_blank(),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12),
+        legend.position = "bottom") +
+  coord_sf(crs = "+proj=moll +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+```
+
+
+```{r}
+ggsave("checklist.regions.png", last_plot(), device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+
+## Checklists whether already in GIFT or NEW
+
+```{r}
+env_pred_dataset <- read.csv(here::here("./data/analysis/env_pred_dataset.csv"), row.names = 1)
+```
+
+```{r}
+env_pred_dataset_2 <- env_pred_dataset %>% 
+  rownames_to_column(var = "desert")
+
+old_new <- merge(env_pred_dataset_2, polygons_data, by = "desert") %>% 
+  st_as_sf()
+```
+
+```{r}
+ggplot()+
+  geom_sf(data = world_coast, col = "grey30", size = 0.3) +
+  geom_sf(data = desert_biomes, aes(fill = "Desert areas"), col = "transparent",  size = 0) +
+  geom_sf(data = arid_sf, aes(fill = "Desert areas"), col = "transparent",  size = 0) +
+  geom_sf(data = old_new, aes(geometry = geometry, fill = category), col = "transparent") +
+  scale_fill_manual(values = c("GIFT" = "blue", "New" = "red", "Desert areas" = "grey70"), labels = c("GIFT", "New", "Desert areas")) +
+  #scale_fill_brewer(palette = "Set1", direction = -1) +
+  theme_bw() +
+  theme(axis.title = element_blank(),
+        panel.border = element_blank(),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12),
+        legend.position = "bottom") +
+  coord_sf(crs = "+proj=moll +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+```
+
+```{r}
+ggsave("old.new.png", last_plot(), device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```

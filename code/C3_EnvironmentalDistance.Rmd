@@ -1,0 +1,569 @@
+---
+title: "EnvironmentalDistance"
+author: "Johanna Klapper"
+date: "5/23/2022"
+output: html_document
+---
+
+This Markdown contains:
+- pairwise correlation of environmental predictors
+- PCA Analysis
+- Plotting of PCs on PCA space
+- Plotting of PCs on map
+- Anova for regions
+- Boxplots of predictors
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(readxl)
+library(vegan)
+library(FactoMineR)
+library(GGally)
+library(ggrepel)
+library(ggforce)
+library(tidyquant)
+library(reshape)
+library(ggExtra)
+library(sf)
+library(kableExtra)
+library(rnaturalearth)
+library(rnaturalearthdata)
+```
+
+
+# Load data
+```{r}
+env_pred_dataset <- read.csv(here::here("./data/analysis/env_pred_dataset.csv"), row.names = 1)
+```
+
+
+# Selecting necessary columns and remove NAs
+```{r}
+env_pred_analysis <- env_pred_dataset %>% 
+  dplyr::select(-c(category, seasT_sd, seasP_sd, Alt_sd, TRI_sd)) %>% 
+  drop_na() 
+```
+
+
+# Correlation and distribution of variables
+
+## Non-transformed variables
+```{r}
+ggpairs(env_pred_analysis, upper = list(continuous = wrap(ggally_cor, digits=2)))
+```
+
+```{r}
+# Distribution of area as one example of a skewed distribution
+area <- env_pred_analysis %>% 
+  mutate(area = Area/1000000) %>% 
+  mutate(area = as.double(area))
+  
+
+ggplot(data = area) +
+  geom_histogram(aes(x = as.double(area)), size = 1.5, bins = 50) +
+  theme_bw() +
+  labs(y = "Count", x = bquote("Area [" ~ km^2 ~ "]")) +
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 15))
+
+ggsave("area.density.png", last_plot(), device = "png", path = here::here("./data/results/"), width = 25, height = 14, units = "cm")
+```
+
+
+## Transformation
+```{r}
+# Determine how to transform SLMP
+hist(model_data$SLMP)
+hist(log(model_data$SLMP))
+hist(sqrt(model_data$SLMP))
+hist(log10(max(model_data$SLMP+1) - model_data$SLMP))
+slmp <- car::powerTransform(model_data$SLMP+1)
+summary(slmp)
+
+hist(model_data$SLMP^2.1)
+```
+
+```{r}
+env_pred_analysis_log <- env_pred_analysis 
+
+env_pred_analysis_log[ , 1:11] <- log(env_pred_analysis_log[ , 1:11] +1)
+env_pred_analysis_log[ , 12] <- env_pred_analysis_log[ , 12]^2.1
+env_pred_analysis_log[ , 13] <- log(env_pred_analysis_log[ , 13] +1)
+```
+
+
+```{r}
+pairs <- ggpairs(env_pred_analysis_log, upper = list(continuous = wrap(ggally_cor, digits = 2, size = 6))) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=9),
+        axis.text.y = element_text(size = 9),
+        strip.text = element_text(size = 13)) 
+pairs
+```
+
+
+```{r}
+ggsave("pairsplot.png", pairs, device = "png", path = here::here("./data/results/"), width = 34, height = 29, units = "cm")
+```
+
+
+
+# PCA Analysis
+
+```{r}
+pca.A <- PCA(env_pred_analysis_log, quanti.sup = 1) # Area as supplementary variable
+```
+
+
+## Plotting preparation
+```{r}
+# join checklist and environmental data
+polygons_data <- read_sf(here::here("./data/analysis/polygons_data.shp"))
+
+env_pred_dataset_na <- env_pred_dataset %>% 
+  drop_na() %>% 
+  rownames_to_column()
+
+pca_poly_data <- polygons_data %>% 
+  st_drop_geometry() %>% 
+  filter(desert %in% env_pred_dataset_na$rowname) %>% 
+  distinct(desert, .keep_all = TRUE) 
+
+setdiff(rownames(env_pred_analysis), pca_poly_data$desert)
+```
+
+
+```{r}
+# extract pc scores for first three component and add to dataframe
+pca.plot.A <- data.frame(rep(NA, 163))
+pca.plot.A$pc1 <- pca.A$ind$coord[, 1] # indexing the first column
+pca.plot.A$pc2 <- pca.A$ind$coord[, 2]  # indexing the second column
+pca.plot.A$pc3 <- pca.A$ind$coord[, 3]  # indexing the third column
+pca.plot.A$desert <- names(pca.A$ind$dist)
+
+# join with checklist/environmental data
+pca.plot.A <- merge(pca.plot.A, pca_poly_data, by = "desert")
+
+# also need to extract the data for the variable contributions to each of the pc axes.
+
+pca.vars.A <- pca.A$var$coord %>% 
+  data.frame
+pca.vars.A <- pca.vars.A * 4
+pca.vars.A$vars <- rownames(pca.vars.A)
+pca.vars.m.A <- melt(pca.vars.A, id.vars = "vars")
+
+# extract data for suplementary variable
+pca.vars.sup.A <- pca.A$quanti.sup$coord %>% 
+  data.frame
+pca.vars.sup.A <- pca.vars.sup.A * 4
+pca.vars.sup.A$vars <- rownames(pca.vars.sup.A)
+```
+
+```{r}
+# labels
+label.A <- pca.vars.A$vars
+label.sup.A <- pca.vars.sup.A$vars
+```
+
+```{r}
+# color scale
+RColorBrewer::brewer.pal(8, name = "Dark2")
+cols.reg <- c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02", "#A6761D", "#666666")
+cols.def <- c("#D95F02", "#1B9E77", "#7570B3")
+```
+
+
+## Plotting
+
+### Variances explained by axes
+```{r}
+pca.eig.A <- pca.A$eig[ ,2] %>% 
+  as.vector() %>% 
+  as.data.frame()
+
+pca.axes.A <- ggplot(data = pca.eig.A, aes(x = fct_inorder(paste0("PC", 1:12), .), y = ., group = FALSE)) +
+  geom_point(size = 2) +
+  geom_line() +
+  labs(x = "PCA axes", y = "Percentage of variance [%]") +
+  theme_bw() +
+  theme(rect = element_rect(size = 0.2),
+        axis.text = element_text(size = 14),
+        axis.title = element_text(size = 15))
+pca.axes.A
+```
+
+```{r}
+ggsave("pca.axes.A.png", pca.axes.A, device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+
+
+### Colored in for regions
+```{r}
+# First and second principal component
+fig.A1 <- ggplot() +
+  geom_point(data = pca.plot.A, aes(x = pc1, y = pc2, fill = contnnt, col = contnnt, shape = islnd_m), size = 3.5, stroke = 1.5) +
+  scale_fill_manual(values = cols.reg) +
+  scale_color_manual(values = cols.reg) +
+  scale_shape_manual(values = c(1, 21)) +
+  geom_segment(data = pca.vars.A, aes(x = 0, y = 0, xend = Dim.1, yend = Dim.2), size = 1, col = "black", arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.1*1.2, y = Dim.2*1.2, label = label.A), data = pca.vars.A, check_overlap = FALSE, col = "black", size = 6.5) +
+  geom_segment(data = pca.vars.sup.A, aes(x = 0, y = 0, xend = Dim.1, yend = Dim.2), size = 1, col = "blue",  arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.1*1.1, y = Dim.2*2.1, label = label.sup.A), data = pca.vars.sup.A, check_overlap = TRUE, col = "blue", size = 6.5) +
+  theme_bw() +
+  theme(legend.title = element_text(size = 17),
+        legend.text = element_text(size = 17),
+        legend.position = c(0.21, 0.11),
+        legend.box.background = element_rect(colour = "black"),
+        axis.title = element_text(size = 18),
+        axis.text = element_text(size = 14))+
+  labs(x = "PC 1 (37.48%)", y = "PC 2 (21.36%)", fill = "Region", col = "Region")+
+  guides(fill=guide_legend(ncol=2, keywidth = 0.6, keyheight = 0.6), shape = "none") +
+  xlim(-6, 5)
+
+fig.A <- ggMarginal(fig.A1, groupFill = TRUE, groupColour = TRUE) # adding density curves
+fig.A
+```
+
+```{r}
+ggsave("figure.pca.A.png", fig.A, device = "png", path = here::here("./data/results/"), width = 31, height = 22, units = "cm")
+```
+
+
+
+```{r}
+# First and third principal component (not included in thesis)
+fig.A2 <- ggplot() +
+  geom_point(data = pca.plot.A, aes(x = pc1, y = pc3, fill = contnnt, col = contnnt), pch = 21, size = 3.5) +
+  scale_fill_manual(values = cols.reg) +
+  scale_color_manual(values = cols.reg) +
+  #scale_fill_brewer(palette = "Dark2", direction = 1) +
+  #scale_color_brewer(palette = "Dark2", direction = 1) +
+  geom_segment(data = pca.vars.A, aes(x = 0, y = 0, xend = Dim.1, yend = Dim.3), size = 1, col = "black", arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.1*1.2, y = Dim.3*1.2, label = label.A), data = pca.vars.A, check_overlap = FALSE, col = "black", size = 6) +
+  geom_segment(data = pca.vars.sup.A, aes(x = 0, y = 0, xend = Dim.1, yend = Dim.3), size = 1, col = "blue", linetype = "dashed",  arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.1*1.2, y = Dim.3*1.2, label = label.sup.A), data = pca.vars.sup.A, check_overlap = TRUE, col = "blue", size = 6) +
+  theme_bw() +
+  theme(legend.title = element_text(size = 15),
+        legend.text = element_text(size = 15),
+        legend.position = c(0.17, 0.09),
+        legend.box.background = element_rect(colour = "black"),
+        axis.title = element_text(size = 16))+
+  labs(x = "PC 1 (37.2%)", y = "PC 3 (13.4%)", fill = "Region", col = "Region")+
+  guides(fill=guide_legend(ncol=2, keywidth = 0.6, keyheight = 0.6)) +
+  xlim(-6, 5)
+
+# Second and third principal component (not included in thesis)
+fig.A3 <- ggplot() +
+  geom_point(data = pca.plot.A, aes(x = pc2, y = pc3, fill = contnnt, col = contnnt), pch = 21, size = 3.5) +
+  scale_fill_manual(values = cols.reg) +
+  scale_color_manual(values = cols.reg) +
+  #scale_fill_brewer(palette = "Dark2", direction = 1) +
+  #scale_color_brewer(palette = "Dark2", direction = 1) +
+  geom_segment(data = pca.vars.A, aes(x = 0, y = 0, xend = Dim.2, yend = Dim.3), size = 1, col = "black", arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.2*1.2, y = Dim.3*1.2, label = label.A), data = pca.vars.A, check_overlap = FALSE, col = "black", size = 6) +
+  geom_segment(data = pca.vars.sup.A, aes(x = 0, y = 0, xend = Dim.2, yend = Dim.3), size = 1, col = "blue", linetype = "dashed",  arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.2*1.2, y = Dim.3*1.2, label = label.sup.A), data = pca.vars.sup.A, check_overlap = TRUE, col = "blue", size = 6) +
+  theme_bw() +
+  theme(legend.title = element_text(size = 15),
+        legend.text = element_text(size = 15),
+        legend.position = c(0.17, 0.09),
+        legend.box.background = element_rect(colour = "black"),
+        axis.title = element_text(size = 16))+
+  labs(x = "PC 2 (16.3%)", y = "PC 3 (13.4%)", fill = "Region", col = "Region")+
+  guides(fill=guide_legend(ncol=2, keywidth = 0.6, keyheight = 0.6)) +
+  xlim(-6, 5)
+```
+
+```{r}
+ggsave("figure.pcaB.png", fig.A2, device = "png", path = here::here("./data/results/"), width = 29, height = 17, units = "cm")
+ggsave("figure.pcaC.png", fig.A3, device = "png", path = here::here("./data/results/"), width = 29, height = 17, units = "cm")
+```
+
+
+
+### Colored in for desert definition
+```{r}
+pca.desert.a <- ggplot() +
+  geom_point(data = pca.plot.A, aes(x = pc1, y = pc2, fill = dsrt_bt, col = dsrt_bt, shape = islnd_m), stroke = 1.5, size = 3.5) +
+  scale_fill_manual(values = cols.def, labels = c("Overlap", "Aridity", "Biome")) +
+  scale_color_manual(values = cols.def, labels = c("Overlap", "Aridity", "Biome")) +
+  scale_shape_manual(values = c(1, 21)) +
+  #scale_fill_brewer(palette = "Dark2", direction = 1) +
+  #scale_color_brewer(palette = "Dark2", direction = 1) +
+  geom_segment(data = pca.vars.A, aes(x = 0, y = 0, xend = Dim.1, yend = Dim.2), size = 1, col = "black", arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.1*1.15, y = Dim.2*1.15, label = label.A), data = pca.vars.A, check_overlap = FALSE, col = "black", size = 7) +
+  geom_segment(data = pca.vars.sup.A, aes(x = 0, y = 0, xend = Dim.1, yend = Dim.2), size = 1, col = "blue",   arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.1*1.1, y = Dim.2*3.1, label = label.sup.A), data = pca.vars.sup.A, check_overlap = TRUE, col = "blue", size = 7) +
+  theme_bw() +
+  theme(legend.title = element_text(size = 16),
+        legend.text = element_text(size = 16),
+        legend.position = c(0.19, 0.1),
+        legend.box.background = element_rect(colour = "black"),
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 14))+
+  labs(x = "PC 1 (37.48%)", y = "PC 2 (21.36%)", fill = "Desert definition", col = "Desert definition")+
+  guides(fill=guide_legend(ncol=2, keywidth = 0.6, keyheight = 0.8), shape = "none")
+
+pca.desert <- ggMarginal(pca.desert.a, groupFill = TRUE, groupColour = TRUE)
+pca.desert
+```
+
+```{r}
+ggsave("pca.desert.def.png", pca.desert, device = "png", path = here::here("./data/results/"), width = 29, height = 20, units = "cm")
+```
+
+
+
+### Plotted on geographical location
+```{r}
+# Coastlines of the world
+world_coast <- ne_coastline(scale = "medium", returnclass = "sf")
+
+
+# Centroides of polygons
+no_multi_poly <- st_cast(st_make_valid(polygons_data), "POLYGON") %>%  # turn multipolygons into polygons
+  distinct(desert, .keep_all = TRUE) 
+
+plots_cent <- geosphere::centroid(as_Spatial(no_multi_poly$geometry)) %>%  # get centroid for each polygon
+  as.data.frame() %>% 
+  st_as_sf(coords = c("V1","V2"), crs = st_crs(world_coast))
+
+plots_cent <- st_join(plots_cent, no_multi_poly, join = st_within) 
+
+pca.geo.data <- merge(plots_cent, pca.plot.A, by = "desert")  # join centroid information with pca data
+```
+
+```{r}
+# Plotting PC1
+pca.geo <- ggplot()+
+  geom_sf(data = world_coast, size = 0.3) +
+  geom_sf(data = pca.geo.data, aes(fill = pc1), shape = 21, col = "transparent", stroke = 0.7, alpha = 0.7, size = 4) +
+    scale_fill_viridis_c(direction = -1, name="PC 1") +
+    theme_void() + 
+  theme_bw() +
+  theme(
+      legend.position = "bottom",
+      panel.border = element_rect(fill = NA, colour = NA),
+      axis.title = element_blank(),
+      legend.text = element_text(size = 12),
+      legend.title = element_text(size = 13),
+      legend.key.size = unit(0.6, "cm"),
+      legend.key.width = unit(0.8, "cm")) +
+  guides(fill=guide_colorbar(ticks.colour = NA))+
+  coord_sf(crs = "+proj=moll +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+
+pca.geo
+```
+
+```{r}
+ggsave("pca.geo.png", pca.geo, device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+
+```{r}
+# Plotting PC2
+pca.geo.2 <- ggplot()+
+  geom_sf(data = world_coast, size = 0.3) +
+  geom_sf(data = pca.geo.data, aes(fill = pc2), shape = 21, col = "transparent", stroke = 0.7, alpha = 0.7, size = 4) +
+    scale_fill_viridis_c(direction = -1, name="PC 2") +
+    theme_void() + 
+  theme_bw() +
+  theme(
+      legend.position = "bottom",
+      panel.border = element_rect(fill = NA, colour = NA),
+      axis.title = element_blank(),
+      legend.text = element_text(size = 12),
+      legend.title = element_text(size = 13),
+      legend.key.size = unit(0.6, "cm"),
+      legend.key.width = unit(0.8, "cm")) +
+  guides(fill=guide_colorbar(ticks.colour = NA))+
+  coord_sf(crs = "+proj=moll +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+
+pca.geo.2
+```
+
+```{r}
+ggsave("pca.geo.2.png", pca.geo.2, device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+
+
+### Anova for regions
+```{r}
+anova.pc1.A <- aov(pc1 ~ contnnt, data = pca.plot.A)
+summary(anova.pc1.A)
+anova.pc2.A <- aov(pc2 ~ contnnt, data = pca.plot.A)
+summary(anova.pc2.A)
+```
+
+
+#### Tukey multiple pairweise comparisons
+```{r}
+tukey.1 <- TukeyHSD(anova.pc1.A)
+
+tukey.1.df <- tukey.1$contnnt %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "continent") %>% 
+  dplyr::select(continent, diff, 'p adj') %>% 
+  mutate(across(where(is.numeric), signif, 2)) %>% 
+  dplyr::rename(Region = continent,
+                'p-value' = 'p adj')
+
+# add significance information
+tukey.1.df <- tukey.1.df %>% 
+  mutate(' ' = case_when(tukey.1.df$`p-value` <= 0.001 ~ "***",
+                         tukey.1.df$`p-value` <= 0.01 & 'p-value' > 0.001 ~ "**",
+                         tukey.1.df$`p-value` <= 0.05 & 'p-value' > 0.01 ~ "*",
+                         tukey.1.df$`p-value` <= 0.1 & 'p-value' > 0.05 ~ ".",
+                         tukey.1.df$`p-value` <= 1 & 'p-value' > 0.1 ~ "",
+                         TRUE ~ ""))
+```
+
+```{r}
+# significant values in bold
+tukey.1.df$`p-value` <- ifelse(
+  tukey.1.df$`p-value` < 0.05,
+  cell_spec(tukey.1.df$`p-value`, bold = T),
+  cell_spec(tukey.1.df$`p-value`, bold = F)
+)
+
+# creating table with kableExtra
+table_aov1 <- tukey.1.df %>% 
+  kable("html", escape = F, digits = 2, table.attr = "style = \"color: black;\"") %>% 
+  kable_styling(font_size = 14, html_font = "Cambria", full_width = F, htmltable_class = "lightable-classic-2") %>% 
+  add_footnote("Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1")
+
+save_kable(table_aov1, file = here::here("./data/results/tableanova.jpg"), self_contained = T, zoom = 3, bs_theme = "flatly") # zoom gives a better resolution
+```
+
+
+```{r}
+tukey.2 <- TukeyHSD(anova.pc2.A)
+
+tukey.2.df <- tukey.2$contnnt %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "continent") %>% 
+  dplyr::select(continent, diff, 'p adj') %>% 
+  mutate(across(where(is.numeric), signif, 2)) %>% 
+  dplyr::rename(Region = continent,
+                'p-value' = 'p adj')
+
+# add significance information
+tukey.2.df <- tukey.2.df %>% 
+  mutate(' ' = case_when(tukey.2.df$`p-value` <= 0.001 ~ "***",
+                         tukey.2.df$`p-value` <= 0.01 & 'p-value' > 0.001 ~ "**",
+                         tukey.2.df$`p-value` <= 0.05 & 'p-value' > 0.01 ~ "*",
+                         tukey.2.df$`p-value` <= 0.1 & 'p-value' > 0.05 ~ ".",
+                         tukey.2.df$`p-value` <= 1 & 'p-value' > 0.1 ~ "",
+                         TRUE ~ ""))
+```
+
+
+```{r}
+# significance values in bold
+tukey.2.df$`p-value` <- ifelse(
+  tukey.2.df$`p-value` < 0.05,
+  cell_spec(tukey.2.df$`p-value`, bold = T),
+  cell_spec(tukey.2.df$`p-value`, bold = F)
+)
+
+# create table with kableExtra
+table_aov2 <- tukey.2.df %>% 
+  kable("html", escape = F, digits = 2, table.attr = "style = \"color: black;\"") %>% 
+  kable_styling(font_size = 14, html_font = "Cambria", full_width = F, htmltable_class = "lightable-classic-2") %>% 
+  add_footnote("Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1")
+
+save_kable(table_aov2, file = here::here("./data/results/tableanova2.jpg"), self_contained = T, zoom = 3, bs_theme = "flatly") # zoom gives a better resoltuion
+```
+
+
+# Boxplots of predictors
+
+## Looking at predictor distribution across desert definitions
+```{r}
+env.data.box <- env_pred_analysis %>% 
+  rownames_to_column(var = "desert") %>% 
+  merge(unique(polygons_data), by = "desert") %>% 
+  mutate(desert.def = case_when(dsrt_bt == "desert" ~ "O",
+                                dsrt_bt == "desert_arid" ~ "A",
+                                dsrt_bt == "desert_biome" ~ "B",
+                                TRUE ~ dsrt_bt))
+
+env.predictors <- c("Area", "Temp"  ,  "Temp_sd" ,"seasT"  , "Prec"  ,  "Prec_sd", "seasP" ,  "Alt"  ,   "Range" ,  "TRI"   ,  "Soil" ,  "interP", "SLMP") 
+env.predictors.unit <- c(bquote("Area [" ~ m^2 ~ "]"), "Temp [°C]"  ,  "Temp_sd [°C]" ,"seasT [°C]"  , "Prec [mm]"  ,  "Prec_sd [mm]", "seasP [mm]" ,  "Alt [m]"  ,   "Range [m]" ,  "TRI [m]"   ,  "Soil [ ]" ,  "interP [mm]", "SLMP [%]")
+
+
+box.env.pred <- lapply(1:13, function(i) {
+  env.pred <- env.data.box %>% 
+    dplyr::select(desert.def, env.predictors[i])
+
+  ggplot() +
+    geom_boxplot(data = env.pred, aes(x = desert.def, y = env.pred[, 2], col = desert.def), size = 0.7) +
+    scale_color_manual(values = c("#1B9E77",  "#7570B3", "#D95F02")) +
+    theme_bw() +
+    theme(axis.title = element_text(size = 13),
+          axis.text.x = element_text(size = 12),
+          legend.position = "none") +
+    labs(x = "", y = env.predictors.unit[[i]])
+
+})
+
+box.env.pred[1]
+```
+
+```{r}
+box.env.plot <- cowplot::plot_grid(box.env.pred[[1]], box.env.pred[[2]], box.env.pred[[3]], box.env.pred[[4]], box.env.pred[[5]], box.env.pred[[6]], box.env.pred[[7]], box.env.pred[[8]], box.env.pred[[9]], box.env.pred[[10]], box.env.pred[[11]], box.env.pred[[12]], box.env.pred[[13]], ncol = 4)
+
+box.env.plot
+```
+
+
+```{r}
+ggsave("boxplot.env.def.png", box.env.plot, device = "png", path = here::here("./data/results/"), width = 25, height = 20, units = "cm")
+```
+
+
+
+## Looking at predictor distribution of island and mainland checklists
+```{r}
+env.data.box.im <- env_pred_analysis %>% 
+  rownames_to_column(var = "desert") %>% 
+  merge(unique(polygons_data), by = "desert") 
+
+env.predictors <- c("Area", "Temp"  ,  "Temp_sd" ,"seasT"  , "Prec"  ,  "Prec_sd", "seasP" ,  "Alt"  ,   "Range" ,  "TRI"   ,  "Soil" ,  "interP", "SLMP") 
+env.predictors.unit <- c(bquote("Area [" ~ m^2 ~ "]"), "Temp [°C]"  ,  "Temp_sd [°C]" ,"seasT [°C]"  , "Prec [mm]"  ,  "Prec_sd [mm]", "seasP [mm]" ,  "Alt [m]"  ,   "Range [m]" ,  "TRI [m]"   ,  "Soil [ ]" ,  "interP [mm]", "SLMP [%]")
+
+
+box.env.pred.im <- lapply(1:13, function(i) {
+  env.pred <- env.data.box.im %>% 
+    dplyr::select(islnd_m, env.predictors[i])
+
+  ggplot() +
+    geom_boxplot(data = env.pred, aes(x = islnd_m, y = env.pred[, 2]), size = 0.7) +
+    theme_bw() +
+    theme(axis.title = element_text(size = 13),
+          axis.text.x = element_text(size = 12),
+          legend.position = "none") +
+    labs(x = "", y = env.predictors.unit[[i]])
+
+})
+
+box.env.pred.im[1]
+```
+
+```{r}
+box.env.plot.im <- cowplot::plot_grid(box.env.pred.im[[1]], box.env.pred.im[[2]], box.env.pred.im[[3]], box.env.pred.im[[4]], box.env.pred.im[[5]], box.env.pred.im[[6]], box.env.pred.im[[7]], box.env.pred.im[[8]], box.env.pred.im[[9]], box.env.pred.im[[10]], box.env.pred.im[[11]], box.env.pred.im[[12]], box.env.pred.im[[13]], ncol = 4)
+
+box.env.plot.im
+```
+
+
+```{r}
+ggsave("boxplot.env.isl.main.png", box.env.plot.im, device = "png", path = here::here("./data/results/"), width = 25, height = 20, units = "cm")
+```

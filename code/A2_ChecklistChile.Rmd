@@ -1,0 +1,106 @@
+---
+title: "A2_ChecklistChile"
+author: "Johanna Klapper"
+date: "3/4/2022"
+output: html_document
+---
+
+For Chile/Atacama we have to remove the doublets, filter out the non-native species, merge the list with the large checklist file based on species names and finally filter for those species which are distributed below 3000 m.
+     
+
+# Load packages
+```{r}
+library(tidyverse)
+```
+
+# Load data
+```{r}
+chile_csv <- read.csv(here::here("data/20220301_Zuloaga_Atacama_Antofagasta_Tarapaca.csv"), sep = ";")
+chile_rds <- readRDS(here::here("./data/20220301_Zuloaga_range.rds"))
+```
+
+# Inspect data
+```{r}
+str(chile_rds)
+str(chile_csv)
+```
+
+
+# Species selection
+
+## Non-native species + doublets
+
+```{r}
+chile_uni <- chile_csv %>% 
+  filter(native == 1) %>% 
+  distinct(species, .keep_all = TRUE)
+```
+
+## Join .csv with range file (.rds)
+```{r}
+chile_joined <- full_join(chile_uni, chile_rds, by = "species")
+chile_joined %>% 
+  filter(is.na(ref_ID.y)) # 166 species from .csv which are not in range rds
+```
+
+## Double entries
+```{r}
+chile_joined %>% 
+  select(species) %>% 
+  unique()
+```
+
+## Filter for max. range < 3000m
+```{r}
+# chile_range <- 
+chile_j_elev <- chile_joined %>% 
+  filter(`6.1.2` < 3000) #%>% 
+  # distinct(species, .keep_all = TRUE)
+```
+
+## Filter ranges
+When we have two entries with different ranges, we take the smaller minimum and bigger maximum
+```{r}
+min_spec <- chile_j_elev %>% 
+  group_by(species) %>% 
+  filter(n() > 1) %>% 
+  mutate(min = min(`6.1.1`)) %>% 
+  distinct(species, .keep_all = TRUE)
+```
+
+```{r}
+max_spec <- chile_j_elev %>% 
+  group_by(species) %>% 
+  filter(n() > 1) %>% 
+  ungroup() %>% 
+  mutate(max = max(`6.1.2`)) %>% 
+  distinct(species, .keep_all = TRUE)
+```
+
+```{r}
+max_spec_sel <- max_spec %>% 
+  select(species, max)
+
+new_species_range <- full_join(min_spec, max_spec_sel, by = "species")
+```
+
+```{r}
+chile_unique <- chile_j_elev %>% 
+  group_by(species) %>% 
+  filter(n() == 1) %>% 
+  mutate(min = `6.1.1`,
+         max = `6.1.2`)
+```
+
+```{r}
+chile_final <- rbind(chile_unique, new_species)
+
+chile_final %>% 
+  filter(is.na(ref_ID.y))
+```
+
+save updated datatable
+```{r}
+write.csv(chile_final, here::here("./data/chile_updated_checklist.csv"), na = "")
+```
+

@@ -1,0 +1,106 @@
+---
+title: "AdditionalCode_EnvironmentalPredictors"
+author: "Johanna Klapper"
+date: "7/29/2022"
+output: html_document
+---
+
+Additional code: environmental values as already stored in the gift database, but there were unrealistic values, therefore we computed the environmental variables ourselves
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# GIFT dataset
+
+## Load data
+```{r}
+gift_env <- readRDS(here::here("./data/analysis/20220524_GIFT_desert_envpred.rds"))
+gift_entities <- read_sf(here::here("./data/gis_data/geoentities/geoentities_simple.shp"))
+gift_elev_range <- readRDS(here::here("./data/analysis/20220525_GIFT_elevrange.rds"))
+```
+
+```{r}
+glimpse(gift_env)
+```
+
+## Prepare data
+```{r}
+biome_exclude_biome <- gift_env %>% 
+  filter(!biome %in% c("Deserts & Xeric Shrublands", "Mediterranean Forests, Woodlands & Scrub", "Temperate Grasslands, Savannas & Shrublands", "Tropical & Subtropical Grasslands, Savannas & Shrublands", "Montane Grasslands & Shrublands")) %>%
+  dplyr::select(entity_ID)
+
+biome_exclude_arid <- gift_env %>% 
+  filter(biome70 == "<70") %>% 
+  dplyr::select(entity_ID)
+
+biome_exclude <- bind_rows(biome_exclude_biome, biome_exclude_arid)
+
+# Tropical & Subtropical Dry Broadleaf Forests
+# Temperate Broadleaf & Mixed Forests
+```
+
+```{r}
+gift_entities_fil <- gift_entities %>% 
+  filter(!entt_ID %in% biome_exclude$entity_ID) %>% 
+  dplyr::select(entt_ID, ge_ntty)
+
+gift_env_fil <- gift_env %>% 
+  inner_join(gift_entities_fil, by = c("entity_ID" = "entt_ID"))
+
+gift_range_area <- gift_elev_range %>% 
+  filter(entity_ID %in% gift_env_fil$entity_ID) %>% 
+  mutate_at(c("min_mi30_grd", "max_mx30_grd"), as.numeric) %>% 
+  mutate(range = max_mx30_grd - min_mi30_grd) %>% 
+  dplyr::select(entity_ID, range, area)
+
+gift_env_all <- gift_env_fil %>% 
+  merge(gift_range_area, by = "entity_ID")
+```
+
+
+## Which columns are needed?
+- entity_ID
+- geo_entity
+- med_wc2.0_bio_30s_01
+- med_wc2.0_bio_30s_04
+- med_wc2.0_bio_30s_12
+- med_wc2.0_bio_30s_15
+- med_mn30_grd
+- range
+- area
+- med_TAXNWRB_1km_ll or med_TAXOUSDA_1km_ll
+
+missing:
+- isolation
+- age
+
+```{r}
+gift_env_desert <- gift_env_all %>% 
+  dplyr::select(c(entity_ID, ge_ntty, med_wc2.0_bio_30s_01, med_wc2.0_bio_30s_04, med_wc2.0_bio_30s_12, med_wc2.0_bio_30s_15, med_mn30_grd, range, area, sd_wc2.0_bio_30s_01, sd_wc2.0_bio_30s_04, sd_wc2.0_bio_30s_12, sd_wc2.0_bio_30s_15, sd_mn30_grd, med_mn30_grd_TRI, sd_mn30_grd_TRI))
+```
+
+
+## Adjust column names
+```{r}
+gift_env_desert_df <- gift_env_desert %>% 
+  mutate(across(.cols = c(3:16), as.numeric)) %>% 
+  rename(mean_temp_mean = med_wc2.0_bio_30s_01,
+         mean_temp_sd = sd_wc2.0_bio_30s_01,
+         temp_seas_mean = med_wc2.0_bio_30s_04,
+         temp_seas_sd = sd_wc2.0_bio_30s_04,
+         mean_prec_mean = med_wc2.0_bio_30s_12,
+         mean_prec_sd = sd_wc2.0_bio_30s_12,
+         prec_seas_mean = med_wc2.0_bio_30s_15,
+         prec_seas_sd = sd_wc2.0_bio_30s_15,
+         mean_alt_mean = med_mn30_grd,
+         mean_alt_sd = sd_mn30_grd,
+         mean_tri_mean = med_mn30_grd_TRI,
+         mean_tri_sd = sd_mn30_grd_TRI) %>% 
+  dplyr::select(-entity_ID) %>% 
+  mutate(category = 'GIFT')
+
+rownames(gift_env_desert_df) <- gift_env_desert_df$ge_ntty
+```

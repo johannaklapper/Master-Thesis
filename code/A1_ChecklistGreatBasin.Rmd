@@ -1,0 +1,35 @@
+---
+title: "A1_ChecklistGreatBasin"
+author: "Johanna Klapper"
+date: "3/21/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+greatbasin <- read.csv(here::here("./data/Great_Basin.csv"))
+```
+
+```{r}
+library(stringr)
+```
+
+```{r}
+# Splitting column with elevational range into two columns with min and max elevation
+greatbasin %>% 
+  mutate(min = elevation) %>% 
+  rename(max = elevation) %>% 
+  select(max) %>% 
+  str_split_fixed("-", 2)
+
+greatbasin[c('min_elev', 'max_elev')] <- str_split_fixed(greatbasin$max, '-', 2)
+```
+
+```{r}
+write.csv(greatbasin, here::here("./data/greatbasin.updated.csv"), na = "")
+```

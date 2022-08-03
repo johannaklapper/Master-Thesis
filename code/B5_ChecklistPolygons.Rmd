@@ -1,0 +1,132 @@
+---
+title: "B4_Polygons"
+author: "Johanna Klapper"
+date: "5/22/2022"
+output: html_document
+---
+
+This RMarkdown will combine the GIFT polygons with the Non-GIFT polygons, the result will be one dataset that includes all polygons of desert areas.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(rnaturalearth)
+library(rnaturalearthdata)
+```
+
+
+# Load data
+```{r}
+non_gift_checklists <- read_sf(here::here("./data/analysis/non_gift_checklists.shp"))
+gift_checklists <- read_sf(here::here("./data/analysis/gift_checklists.shp"))
+```
+
+
+# Polygons
+```{r}
+polygons_data <- rbind(gift_checklists, non_gift_checklists) %>% 
+  dplyr::rename(desert_both = dsrt_bt,
+                island.mainland = islnd_m)
+```
+
+```{r}
+ggplot(polygons_data) +
+  geom_sf(aes(geometry = geometry, fill = desert_both))
+```
+
+
+
+# Adding additional information, e.g. continent, main desert
+```{r}
+# Adding information whether polygons belong to aridity, ecoregions or both definitions
+
+polygons_data$definition <- ifelse(polygons_data$desert_both == 'desert_arid', 1, 
+                             ifelse(polygons_data$desert_both == 'desert_biome', 2, 3))
+```
+
+```{r}
+# Adding information to which main region polygons belong
+
+sf_use_s2(FALSE)
+
+world <- countries110 %>% 
+  st_as_sf()
+
+polygons_data <- st_join(polygons_data,world)
+polygons_data$continent_num <- ifelse(polygons_data$continent %in% c('Asia','Oceania'), 1,
+                                        ifelse(polygons_data$continent == 'Africa', 2,
+                                               ifelse(polygons_data$continent == 'Europe', 3,
+                                                      ifelse(polygons_data$continent %in% c('South America', 'North America'), 4, 5))))
+```
+
+```{r}
+# Adding information to which smaller region polygons belong
+
+polygons_data$region <- ifelse(polygons_data$region_wb == "East Asia & Pacific", 1,
+                               ifelse(polygons_data$region_wb == "Europe & Central Asia", 2,
+                                      ifelse(polygons_data$region_wb == "Latin America % Caribbean", 3,
+                                             ifelse(polygons_data$region_wb == "Middle East & North Africa", 4,
+                                                    ifelse(polygons_data$region_wb == "North America", 5,
+                                                           ifelse(polygons_data$region_wb == "South Asia", 6, 7))))))
+```
+
+```{r}
+# Manually assigning islands to main regions
+
+islands <- polygons_data %>%  filter(continent == "Island") %>% dplyr::select(desert) %>% st_drop_geometry()
+
+asia.island <- c("Farasan_AlKabir", "Farasan_Sajid", "Farasan_Zifaf", "Farasan_Qummah", "Farasan_Dumsuq", "Farasan_Dushak")
+northafrica.island <- c("Fuerteventura", "Lanzarote", "Soqotra")
+southafrica.island <- c("Ascension")
+southamerica.island <- c("Española", "Fernandina", "Floreana", "Genovesa", "Isabela", "Marchena", "Pinta", "Pinzón", "Santa Cruz, Galapagos", "San Cristóbal", "Santiago, Galapagos", "Santa Fé", "Wolf", "Department of Galapagos, Ecuador", "Chanaral, Humboldt Current System", "Damas, Humboldt Current System", "Choros, Humboldt Current System")
+northamerica.island <- c("Anegada", "St. Martin", "Guadalupe Island (Mexico)", "Ángel de la Guarda", "San Lorenzo", "San Estéban", "San Pedro Nolasco", "Tortuga", "San Marcos", "Carmen", "San José", "San Francisco", "Espíritu Santo", "Cerralvo", "Datíl", "Ventana", "Cabeza de Caballo", "Piojo", "Mitlan")
+```
+
+```{r}
+# Adjusting some regional assignments, e.g. divide Africa into North and South
+
+polygons_data <- polygons_data %>% 
+  mutate(continent = case_when(desert == "Peru" ~ "South America",
+                             TRUE ~ continent)) %>% 
+   mutate(continent = case_when(desert == "Chile" ~ "South America",
+                             TRUE ~ continent)) %>%
+   mutate(continent = case_when(desert == "NorthAmerica_SonoranDesert" ~ "North America",
+                             TRUE ~ continent)) %>%
+  mutate(continent = case_when(continent == "Africa" & desert %in% c("Namibia", "NamibDesert", "NamibDesert_Gobabeb", "Botswana SW", "Toliara") ~ "South Africa", TRUE ~ continent)) %>% 
+  mutate(continent = case_when(continent == "Africa" & !desert %in% c("Namibia", "NamibDesert", "NamibDesert_Gobabeb", "Botswana SW", "Toliara") ~ "North Africa", TRUE ~ continent)) %>% 
+  mutate(continent = case_when(desert %in% asia.island ~ "Asia",
+                               desert %in% northafrica.island ~ "North Africa",
+                               desert %in% southamerica.island ~ "South America",
+                               desert %in% northamerica.island ~ "North America",
+                               desert %in% southafrica.island ~ "South Africa",
+                               TRUE ~ continent)) %>% 
+  dplyr::select(-c(region_wb, continent_num, region)) %>% 
+  unique()
+```
+
+
+# Selecting relevant columns
+```{r}
+polygons_data <- polygons_data %>% 
+  dplyr::select(desert, desert_both, geometry, definition, continent, island.mainland)
+```
+
+```{r}
+# See where polygons assigned as Island are located
+
+polygons_data %>% 
+  filter(is.na(continent)) %>% 
+  ggplot() +
+  geom_sf(data = world) +
+  geom_sf(aes(fill = continent, col = continent), size = 2)
+```
+
+# Save data
+```{r}
+write_sf(polygons_data, here::here("./data/analysis/polygons_data.shp"))
+```

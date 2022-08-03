@@ -1,0 +1,432 @@
+---
+title: "AdditionalCode_PCA"
+author: "Johanna Klapper"
+date: "7/30/2022"
+output: html_document
+---
+
+Additional code:
+- PCA with area and temp as supplementary variables
+- PCA without area and temp
+- PCA with clustering
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(readxl)
+library(vegan)
+library(FactoMineR)
+library(GGally)
+library(ggrepel)
+library(ggforce)
+library(tidyquant)
+library(reshape)
+library(ggExtra)
+library(sf)
+library(kableExtra)
+library(rnaturalearth)
+library(rnaturalearthdata)
+```
+
+
+# Load data
+```{r}
+env_pred_dataset <- read.csv(here::here("./data/analysis/env_pred_dataset.csv"), row.names = 1)
+```
+
+
+# Selecting necessary columns
+```{r}
+env_pred_analysis <- env_pred_dataset %>% 
+  dplyr::select(-c(category, seasT_sd, seasP_sd, Alt_sd, TRI_sd)) %>% 
+  drop_na() 
+```
+
+
+# Transformation
+```{r}
+env_pred_analysis_log <- env_pred_analysis 
+
+env_pred_analysis_log[ , 1:11] <- log(env_pred_analysis_log[ , 1:11] +1)
+env_pred_analysis_log[ , 12] <- env_pred_analysis_log[ , 12]^2.1
+env_pred_analysis_log[ , 13] <- log(env_pred_analysis_log[ , 13] +1)
+```
+
+
+# PCA Analysis
+
+```{r}
+pca <- PCA(env_pred_analysis_log, quanti.sup = c(1:2)) # Area + Temp as supplementary variables
+```
+
+
+## Plotting preparation
+```{r}
+polygons_data <- read_sf(here::here("./data/analysis/polygons_data.shp"))
+
+env_pred_dataset_na <- env_pred_dataset %>% 
+  drop_na() %>% 
+  rownames_to_column()
+
+pca_poly_data <- polygons_data %>% 
+  st_drop_geometry() %>% 
+  filter(desert %in% env_pred_dataset_na$rowname) %>% 
+  distinct(desert, .keep_all = TRUE) 
+
+setdiff(rownames(env_pred_analysis), pca_poly_data$desert)
+```
+
+
+## PCA with supp.var Area + Temp
+```{r}
+# extract pc scores for first two component and add to dat dataframe
+pca.plot <- data.frame(rep(NA, 163))
+pca.plot$pc1 <- pca$ind$coord[, 1] # indexing the first column
+pca.plot$pc2 <- pca$ind$coord[, 2]  # indexing the second column
+pca.plot$pc3 <- pca$ind$coord[, 3]  # indexing the third column
+pca.plot$desert <- names(pca$ind$dist)
+pca.plot <- merge(pca.plot, pca_poly_data, by = "desert")
+
+pca.vars.sup <- pca$quanti.sup$coord %>% 
+  data.frame
+pca.vars.sup <- pca.vars.sup * 4
+pca.vars.sup$vars <- rownames(pca.vars.sup)
+
+#We also need to extract the data for the variable contributions to each of the pc axes.
+
+pca.vars <- pca$var$coord %>% 
+  data.frame
+pca.vars <- pca.vars * 4
+pca.vars$vars <- rownames(pca.vars)
+pca.vars.m <- melt(pca.vars, id.vars = "vars")
+```
+
+```{r}
+label <- pca.vars$vars
+label.sup <- pca.vars.sup$vars
+```
+
+```{r}
+cols <- RColorBrewer::brewer.pal(7, name = "Dark2")
+```
+
+```{r}
+pca.eig <- pca$eig[ ,2] %>% 
+  as.vector() %>% 
+  as.data.frame()
+
+pca.axes <- ggplot(data = pca.eig, aes(x = paste0("PC", 1:9), y = ., group = FALSE)) +
+  geom_point(size = 2) +
+  geom_line() +
+  labs(x = "PCA axes", y = "Percentage of variance [%]") +
+  theme_bw() +
+  theme(rect = element_rect(size = 0.2))
+```
+
+
+```{r}
+ggsave("pca.axes.png", pca.axes, device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+
+
+### Colored in for regions
+```{r}
+fig.2a <- ggplot() +
+  geom_point(data = pca.plot, aes(x = pc1, y = pc2, fill = contnnt, col = contnnt), pch = 21, size = 3) +
+  scale_fill_manual(values = cols) +
+  scale_color_manual(values = cols) +
+  #scale_fill_brewer(palette = "Dark2", direction = 1) +
+  #scale_color_brewer(palette = "Dark2", direction = 1) +
+  geom_segment(data = pca.vars, aes(x = 0, y = 0, xend = Dim.1, yend = Dim.2), size = 1, col = "black", arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.1*1.2, y = Dim.2*1.2, label = label), data = pca.vars, check_overlap = FALSE, col = "black", size = 4.5) +
+  geom_segment(data = pca.vars.sup, aes(x = 0, y = 0, xend = Dim.1, yend = Dim.2), size = 1, col = "blue", linetype = "dashed",  arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.1*1.2, y = Dim.2*1.2, label = label.sup), data = pca.vars.sup, check_overlap = TRUE, col = "blue", size = 4.5) +
+  theme_bw() +
+  theme(legend.title = element_text(size = 15),
+        legend.text = element_text(size = 13),
+        legend.position = c(0.2, 0.15),
+        legend.box.background = element_rect(colour = "black"),
+        axis.title = element_text(size = 14))+
+  labs(x = "PC 1 (38.7%)", y = "PC 2 (17.2%)", fill = "Region", col = "Region")+
+  guides(fill=guide_legend(ncol=2, keywidth = 0.6, keyheight = 0.6)) +
+  xlim(-6, 5)
+
+fig.2 <- ggMarginal(fig.2a, groupFill = TRUE, groupColour = TRUE)
+ggsave("figure2.png", fig.2, device = "png", path = here::here("./data/results/"), width = 25, height = 19, units = "cm")
+
+#position = position_jitter(width = 0.2, height = 0.2, seed = 123),
+```
+
+```{r}
+fig.2b <- ggplot() +
+  geom_point(data = pca.plot, aes(x = pc1, y = pc3, fill = contnnt, col = contnnt), pch = 21, size = 3) +
+  scale_fill_manual(values = cols) +
+  scale_color_manual(values = cols) +
+  #scale_fill_brewer(palette = "Dark2", direction = 1) +
+  #scale_color_brewer(palette = "Dark2", direction = 1) +
+  geom_segment(data = pca.vars, aes(x = 0, y = 0, xend = Dim.1, yend = Dim.3), size = 1, col = "black", arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.1*1.2, y = Dim.3*1.2, label = label), data = pca.vars, check_overlap = FALSE, col = "black", size = 4.5) +
+  geom_segment(data = pca.vars.sup, aes(x = 0, y = 0, xend = Dim.1, yend = Dim.3), size = 1, col = "blue", linetype = "dashed",  arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.1*1.2, y = Dim.3*1.2, label = label.sup), data = pca.vars.sup, check_overlap = TRUE, col = "blue", size = 4.5) +
+  theme_bw() +
+  theme(legend.title = element_text(size = 15),
+        legend.text = element_text(size = 13),
+        legend.position = c(0.25, 0.88),
+        legend.box.background = element_rect(colour = "black"),
+        axis.title = element_text(size = 14))+
+  labs(x = "PC 1 (38.7%)", y = "PC 3 (17.1%)", fill = "Region", col = "Region")+
+  guides(fill=guide_legend(ncol=2, keywidth = 0.6, keyheight = 0.6)) +
+  xlim(-6, 5)
+
+fig.2c <- ggplot() +
+  geom_point(data = pca.plot, aes(x = pc2, y = pc3, fill = contnnt, col = contnnt), pch = 21, size = 3) +
+  scale_fill_manual(values = cols) +
+  scale_color_manual(values = cols) +
+  #scale_fill_brewer(palette = "Dark2", direction = 1) +
+  #scale_color_brewer(palette = "Dark2", direction = 1) +
+  geom_segment(data = pca.vars, aes(x = 0, y = 0, xend = Dim.2, yend = Dim.3), size = 1, col = "black", arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.2*1.2, y = Dim.3*1.2, label = label), data = pca.vars, check_overlap = FALSE, col = "black", size = 4.5) +
+  geom_segment(data = pca.vars.sup, aes(x = 0, y = 0, xend = Dim.2, yend = Dim.3), size = 1, col = "blue", linetype = "dashed",  arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.2*1.2, y = Dim.3*1.2, label = label.sup), data = pca.vars.sup, check_overlap = TRUE, col = "blue", size = 4.5) +
+  theme_bw() +
+  theme(legend.title = element_text(size = 15),
+        legend.text = element_text(size = 13),
+        legend.position = c(0.25, 0.88),
+        legend.box.background = element_rect(colour = "black"),
+        axis.title = element_text(size = 14))+
+  labs(x = "PC 2 (17.2%)", y = "PC 3 (17.1%)", fill = "Region", col = "Region")+
+  guides(fill=guide_legend(ncol=2, keywidth = 0.6, keyheight = 0.6)) +
+  xlim(-6, 5)
+
+
+fig.2f <- cowplot::plot_grid(fig.2b, fig.2c, ncol = 2)
+ggsave("figure2f.png", fig.2f, device = "png", path = here::here("./data/results/"), width = 38, height = 18, units = "cm")
+ggsave("figure2b.png", fig.2b, device = "png", path = here::here("./data/results/"), width = 25, height = 17, units = "cm")
+ggsave("figure2c.png", fig.2c, device = "png", path = here::here("./data/results/"), width = 25, height = 17, units = "cm")
+```
+
+
+### Colored in for desert definition
+```{r}
+pca.desert.a <- ggplot() +
+  geom_point(data = pca.plot, aes(x = pc1, y = pc2, fill = dsrt_bt, col = dsrt_bt), pch = 21, size = 3) +
+  scale_fill_manual(values = cols) +
+  scale_color_manual(values = cols) +
+  #scale_fill_brewer(palette = "Dark2", direction = 1) +
+  #scale_color_brewer(palette = "Dark2", direction = 1) +
+  geom_segment(data = pca.vars, aes(x = 0, y = 0, xend = Dim.1, yend = Dim.2), size = 1, col = "black", arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.1*1.15, y = Dim.2*1.15, label = label), data = pca.vars, check_overlap = FALSE, col = "black", size = 4.5) +
+  geom_segment(data = pca.vars.sup, aes(x = 0, y = 0, xend = Dim.1, yend = Dim.2), size = 1, col = "blue", linetype = "dashed",  arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.1*1.1, y = Dim.2*1.1, label = label.sup), data = pca.vars.sup, check_overlap = TRUE, col = "blue", size = 4.5) +
+  theme_bw() +
+  theme(legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        legend.position = c(0.2, 0.15),
+        legend.box.background = element_rect(colour = "black"),
+        axis.title = element_text(size = 13))+
+  labs(x = "PC 1 (38.7%)", y = "PC 2 (17.2%)", fill = "Region", col = "Region")+
+  guides(fill=guide_legend(ncol=2, keywidth = 0.6, keyheight = 0.6))
+
+pca.desert <- ggMarginal(pca.desert.a, groupFill = TRUE, groupColour = TRUE)
+ggsave("pca.desert.png", pca.desert, device = "png", path = here::here("./data/results/"), width = 25, height = 18, units = "cm")
+```
+
+
+
+### Anova for regions
+```{r}
+anova.pc1 <- aov(pc1 ~ contnnt, data = pca.plot)
+summary(anova.pc1)
+anova.pc2 <- aov(pc2 ~ contnnt, data = pca.plot)
+summary(anova.pc2)
+```
+
+
+#### Tukey multiple pairweise comparisons
+```{r}
+tukey.1 <- TukeyHSD(anova.pc1)
+
+tukey.1.df <- tukey.1$contnnt %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "continent") %>% 
+  dplyr::select(continent, diff, 'p adj') %>% 
+  mutate(across(where(is.numeric), signif, 2)) %>% 
+  dplyr::rename(Region = continent,
+                'p-value' = 'p adj')
+
+tukey.1.df <- tukey.1.df %>% 
+  mutate(' ' = case_when(tukey.1.df$`p-value` <= 0.001 ~ "***",
+                         tukey.1.df$`p-value` <= 0.01 & 'p-value' > 0.001 ~ "**",
+                         tukey.1.df$`p-value` <= 0.05 & 'p-value' > 0.01 ~ "*",
+                         tukey.1.df$`p-value` <= 0.1 & 'p-value' > 0.05 ~ ".",
+                         tukey.1.df$`p-value` <= 1 & 'p-value' > 0.1 ~ "",
+                         TRUE ~ ""))
+```
+
+```{r}
+tukey.1.df$`p-value` <- ifelse(
+  tukey.1.df$`p-value` < 0.05,
+  cell_spec(tukey.1.df$`p-value`, bold = T),
+  cell_spec(tukey.1.df$`p-value`, bold = F)
+)
+
+tukey.1.df %>% 
+  kable("html", escape = F, digits = 2) %>% 
+  kable_styling(font_size = 12, html_font = "Cambria", full_width = F, htmltable_class = "lightable-classic-2") %>% 
+  add_footnote("Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1") %>%
+  save_kable(file = here::here("./data/results/tableanova.png"), self_contained = T)
+```
+
+
+```{r}
+tukey.2 <- TukeyHSD(anova.pc2)
+
+tukey.2.df <- tukey.2$contnnt %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "continent") %>% 
+  dplyr::select(continent, diff, 'p adj') %>% 
+  mutate(across(where(is.numeric), signif, 2)) %>% 
+  dplyr::rename(Region = continent,
+                'p-value' = 'p adj')
+
+
+tukey.2.df <- tukey.2.df %>% 
+  mutate(' ' = case_when(tukey.2.df$`p-value` <= 0.001 ~ "***",
+                         tukey.2.df$`p-value` <= 0.01 & 'p-value' > 0.001 ~ "**",
+                         tukey.2.df$`p-value` <= 0.05 & 'p-value' > 0.01 ~ "*",
+                         tukey.2.df$`p-value` <= 0.1 & 'p-value' > 0.05 ~ ".",
+                         tukey.2.df$`p-value` <= 1 & 'p-value' > 0.1 ~ "",
+                         TRUE ~ ""))
+```
+
+
+```{r}
+tukey.2.df$`p-value` <- ifelse(
+  tukey.2.df$`p-value` < 0.05,
+  cell_spec(tukey.2.df$`p-value`, bold = T),
+  cell_spec(tukey.2.df$`p-value`, bold = F)
+)
+
+tukey.2.df %>% 
+  kable("html", escape = F, digits = 2) %>% 
+  kable_styling(font_size = 12, html_font = "Cambria", full_width = F, htmltable_class = "lightable-classic-2") %>% 
+  add_footnote("Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1") %>%
+  save_kable(file = here::here("./data/results/tableanova2.png"), self_contained = T)
+```
+
+
+## PCA without area and temp
+
+```{r}
+env_pred_analysis_log_2 <- env_pred_analysis_log %>% 
+  dplyr::select(-c(Area, Temp, Temp_sd))
+```
+
+```{r}
+#calculate principal components
+pca.results.2 <- prcomp(env_pred_analysis_log_2, scale = TRUE, center = TRUE)
+summary(pca.results.2)
+
+#reverse the signs
+pca.results.2$rotation <- -1*pca.results.2$rotation
+
+#display principal components
+pca.results.2$rotation
+```
+
+```{r}
+#reverse the signs of the scores
+pca.results.2$x <- -1*pca.results.2$x
+
+#display the first six scores
+head(pca.results.2$x)
+```
+
+
+```{r}
+eigen.2 <- as.data.frame(sqrt(pca.results.2$sdev) * pca.results.2$rotation[, 1:2] * 7)
+```
+
+```{r}
+points.2 <- as.data.frame(pca.results.2$x)[, 1:2]
+```
+
+```{r}
+label.2 <- c("seasT", "Prec", "seasP", "Alt", "Range", "seasT_sd", "Prec_sd", "seas_P", "Alt_sd", "TRI", "TRI_sd")
+```
+
+```{r}
+ggplot() +
+  geom_point(data = points.2, aes(x = PC1, y = PC2, fill = pca_poly_data$dsrt_bt), pch = 21, size = 2, col = "transparent") +
+  scale_fill_brewer(palette = "Dark2", na.value = "grey") +
+  geom_segment(data = eigen.2, aes(x = 0, y = 0, xend = PC1, yend = PC2), size = 0.8, col = "black", arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = PC1*1.1, y = PC2*1.1, label = label.2), data = eigen.2, check_overlap = TRUE, position = position_jitter(width = 0.2, height = 0.2, seed = 123), col = "black", size = 4) +
+  theme_bw() +
+  theme(legend.title = element_blank(),
+        legend.text = element_text(size = 14)) 
+```
+
+
+
+```{r}
+ggplot() +
+  geom_point(data = points.2, aes(x = PC1, y = PC2, fill = pca_poly_data$contnnt), pch = 21, size = 2, col = "transparent") +
+  scale_fill_brewer(palette = "Dark2", na.value = "grey") +
+  geom_segment(data = eigen.2, aes(x = 0, y = 0, xend = PC1, yend = PC2), size = 0.9, col = "black", arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = PC1*1.1, y = PC2*1.1, label = label.2), data = eigen.2, check_overlap = TRUE, position = position_jitter(width = 0.2, height = 0.2, seed = 123), col = "black", size = 4) +
+  theme_bw() +
+  theme(legend.title = element_blank(),
+        legend.text = element_text(size = 14)) 
+```
+
+
+## PCA with clustering
+```{r}
+dis_env <- vegdist(env_pred_analysis_log_2, method = "bray", na.rm = TRUE)
+env_clust <- hclust(dis_env, method = "complete")
+plot(env_clust, label = FALSE)
+```
+
+
+```{r}
+#env_clust_3 <- cutree(env_clust, k = 5) %>% 
+#  as.data.frame() %>% 
+#  rownames_to_column() 
+
+calha.index <- sapply(1:12, function(x) {
+  
+  clustering <- kmeans(env_pred_analysis_log_2, x)
+  calinhara(env_pred_analysis_log_2, clustering = clustering$cluster)
+
+})
+plot(calha.index)
+```
+
+
+```{r}
+clustering <- kmeans(env_pred_analysis_log_2, 3)
+points.2.cl <- bind_cols(points.2, clustering$cluster) %>% 
+  mutate_at("...3", as.character)
+
+points.2.cl <- dplyr::rename(points.2.cl, cluster = ...3)
+```
+
+
+```{r}
+ggplot() +
+  geom_point(data = points.2.cl, aes(x = PC1, y = PC2, fill = pca_poly_data$contnnt), pch = 21, size = 2, col = "transparent") +
+  scale_fill_brewer(palette = "Dark2", na.value = "grey") +
+  geom_segment(data = eigen.2, aes(x = 0, y = 0, xend = PC1, yend = PC2), size = 0.9, col = "black", arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = PC1*1.1, y = PC2*1.1, label = label.2), data = eigen.2, check_overlap = TRUE, position = position_dodge(0.5), col = "black", size = 4) +
+  theme_bw() +
+  theme(legend.title = element_blank(),
+        legend.text = element_text(size = 14)) +
+  geom_mark_hull(aes(x = PC1, y = PC2, col = cluster), data = points.2.cl, size = 1.2)
+```
+

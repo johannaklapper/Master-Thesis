@@ -1,0 +1,92 @@
+---
+title: "B3_GiftChecklists"
+author: "Johanna Klapper"
+date: "5/12/2022"
+output: html_document
+---
+
+The species dataset from GIFT has to be reduced to the areas we will be using, e.g. desert biomes and related biomes if desert area > 70%.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Load packages
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(sp)
+library(rgdal)
+library(raster)
+library(sf)
+```
+
+
+# Load data
+```{r}
+gift <- readRDS(here::here("data/analysis/20220524_GIFT_desert_checklist.rds"))
+gift_entities <- read_sf(here::here("data/gis_data/geoentities/geoentities_simple.shp"))
+gift_env <- readRDS(here::here("./data/analysis/20220524_GIFT_desert_envpred.rds"))
+```
+
+# First glimpse
+```{r}
+glimpse(gift)
+
+gift$desert_both %>% 
+  unique()
+
+gift$biome %>% 
+  unique()
+```
+
+
+# Retrieve desert entities from env data
+```{r}
+# exclude biomes that are not desert or adjacent biome types, i.e. Torpical & Subtropical Dry Broadleaf Forests, Temperate Broadleaf & Mixed Forests
+biome_exclude_biome <- gift_env %>% 
+  filter(!biome %in% c("Deserts & Xeric Shrublands", "Mediterranean Forests, Woodlands & Scrub", "Temperate Grasslands, Savannas & Shrublands", "Tropical & Subtropical Grasslands, Savannas & Shrublands", "Montane Grasslands & Shrublands")) %>%
+  dplyr::select(entity_ID)
+
+# exclude entities that have a coverage by desert area smaller than 70%
+biome_exclude_arid <- gift_env %>% 
+  filter(perc_biome_desert != 0 & perc_biome_desert < 70) %>% 
+  dplyr::select(entity_ID)
+
+biome_exclude <- bind_rows(biome_exclude_biome, biome_exclude_arid)
+```
+
+```{r}
+gift_env_fil <- gift_env %>% 
+  filter(!entity_ID %in% biome_exclude$entity_ID)
+```
+
+
+
+# Extract desert entities
+```{r}
+desert_entities_shp <- gift_entities %>% 
+  filter(entt_ID %in% gift_env_fil$entity_ID) 
+  
+gift_checklists <- gift_env_fil %>% 
+  dplyr::select(entity_ID, desert_both) %>% 
+  unique() %>% 
+  merge(desert_entities_shp, by.x = "entity_ID", by.y = "entt_ID") %>% 
+  dplyr::select(ge_ntty, desert_both, geometry, entty_c) %>% 
+  dplyr::rename(desert = ge_ntty,
+                island.mainland = entty_c) %>% 
+  mutate(island.mainland = ifelse(island.mainland == "Island", "Island", "Mainland")) %>% # create column with island/mainland category
+  filter(!desert %in% c("Patos", "Salsipuedes", "Alcatraz")) # no environmental data available for those three areas
+```
+
+```{r}
+plot(gift_checklists$geometry)
+```
+
+
+# Save dataset
+```{r}
+write_sf(gift_checklists, here::here("./data/analysis/gift_checklists.shp"))
+```
+
+

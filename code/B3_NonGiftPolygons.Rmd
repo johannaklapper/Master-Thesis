@@ -1,0 +1,325 @@
+---
+title: "B3_NonGiftPolygons"
+author: "Johanna Klapper"
+date: "5/11/2022"
+output: html_document
+---
+
+This Markdown will combine the checklists from outside GIFT with the respective polygons.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(sf)
+library(exactextractr)
+library(raster)
+```
+
+
+# Load data
+```{r}
+dataset <- read.csv(here::here("./data/checklists/processed/dataset_proc.csv"), header = TRUE)
+```
+
+```{r}
+path <- c(here::here("./data/polygons/"))
+setwd(path)
+
+polygon_names <- list.files(path = path, pattern = "\\.shp$")        # Get all file names
+polygon_names                                                        # Return file names to console
+
+polygon_list <- sapply(polygon_names, function(x) read_sf(x), USE.NAMES = TRUE)  # Read all shapefiles
+
+list2env(polygon_list,.GlobalEnv)  # Unlist shapefile list
+rm(polygon_list)
+```
+
+
+# Clip polygons for Chile and Peru to < 3000m
+```{r}
+mean_alt <- raster(here::here("./data/analysis/rasters/mn30_grd/w001001.adf"))
+
+chile <- st_transform(Chile.shp, crs(mean_alt))
+raster_chile <- crop(mean_alt, chile)
+raster_chile_mask <- mask(raster_chile, chile)
+raster_chile_clip <- raster_chile_mask < 3000
+raster_chile_shp <- rasterToPolygons(raster_chile_clip, dissolve = TRUE)
+Chile.shp <- st_as_sf(raster_chile_shp) %>% 
+  filter(layer == 1)
+
+peru <- st_transform(PER_CoastDesert.shp, crs(mean_alt))
+raster_peru <- crop(mean_alt, peru)
+raster_peru_mask <- mask(raster_peru, peru)
+raster_peru_clip <- raster_peru_mask < 3000
+raster_peru_shp <- rasterToPolygons(raster_peru_clip, dissolve = TRUE)
+PER_CoastDesert.shp <- st_as_sf(raster_peru_shp) %>% 
+  filter(layer == 1)
+```
+
+
+# Prepare data, i.e. adjust names of polygons
+
+## Add name of desert
+```{r}
+Air_mountains.shp <- Air_mountains.shp %>% 
+  mutate(desert = "SaharaDesert_AirMassif")
+
+AralIsland_Uzbek.shp <- AralIsland_Uzbek.shp %>% 
+  mutate(desert = "Uzbekistan_VozrozhdeniyaIsland")
+
+Binalood.shp <- Binalood.shp %>% 
+  mutate(desert = "Iran Fereizi")
+
+Central_Namib_polygon.shp <- Central_Namib_polygon.shp %>% 
+  mutate(desert = "NamibDesert")
+
+Chile.shp <- Chile.shp %>% 
+  mutate(desert = "Chile") %>% 
+  st_transform(crs = st_crs(Air_mountains.shp))
+
+China_desert_dis.shp <- China_desert_dis.shp %>% 
+  mutate(desert = "China")
+
+China_TenggerDesert.shp <- China_TenggerDesert.shp %>% 
+  mutate(desert = "China_TenggerDesert")
+
+Dumsuq.shp <- Dumsuq.shp %>% 
+  mutate(desert = "Farasan_Dumsuq")
+
+Dushak.shp <- Dushak.shp %>% 
+  mutate(desert = "Farasan_Dushak")
+
+Egypt_Wadi_Allaqi_NR.shp <- Egypt_Wadi_Allaqi_NR.shp %>% 
+  mutate(desert = "Egypt")
+
+El_Rawakeeb_Flora_Sudan.shp <- El_Rawakeeb_Flora_Sudan.shp %>% 
+  mutate(desert = "Sudan_KhartoumState")
+
+`Farasan Al Kabir.shp` <- `Farasan Al Kabir.shp` %>% 
+  mutate(desert = "Farasan_AlKabir")
+
+Flora_Assaba_Mauritanie.shp <- Flora_Assaba_Mauritanie.shp %>% 
+  mutate(desert = "Mauritania_Assaba")
+
+Gobabeb_try.shp <- Gobabeb_try.shp %>% 
+  mutate(desert = "NamibDesert_Gobabeb")
+
+GreatBasinNP.shp <- GreatBasinNP.shp %>% 
+  mutate(desert = "NorthAmerica_GreatBasin")
+
+Heydari.shp <- Heydari.shp %>% 
+  mutate(desert = "Iran Heydari")
+
+Indian_desert.shp <- Indian_desert.shp %>% 
+  mutate(desert = "India")
+
+Iran_IsfahanProvince.shp <- Iran_IsfahanProvince.shp %>% 
+  mutate(desert = "Iran Isfahan Province")
+
+Iran_SistanRegion.shp <- Iran_SistanRegion.shp %>% 
+  mutate(desert = "Iran Sistan Baluchestan Province")
+
+Iran_SouthernKhorasan.shp <- Iran_SouthernKhorasan.shp %>% 
+  mutate(desert = "Iran Southern Khorasan")
+
+Iran_YahyaAbad_2.shp <- Iran_YahyaAbad_2.shp %>% 
+  mutate(desert = "Iran Yahya Abad")
+
+Jebel_Uweinat.shp <- Jebel_Uweinat.shp %>% 
+  mutate(desert = "SaharaDesert_JebelUweinat")
+
+Kavir.shp <- Kavir.shp %>% 
+  mutate(desert = "Iran Kavir Region")
+
+Libya.shp <- Libya.shp %>% 
+  mutate(desert = "Libya_Tanezzuft")
+
+Ozenda_flora_zoneA.shp <- Ozenda_flora_zoneA.shp %>% 
+  mutate(desert = "SaharaDesert")
+
+PER_CoastDesert.shp <- PER_CoastDesert.shp %>% 
+  mutate(desert = "Peru")
+
+Qummah.shp <- Qummah.shp %>% 
+  mutate(desert = "Farasan_Qummah")
+
+Sajid.shp <- Sajid.shp %>% 
+  mutate(desert = "Farasan_Sajid")
+
+SierraDeLaPaila_Mexico.shp <- SierraDeLaPaila_Mexico.shp %>% 
+  mutate(desert = "MexicanCoahuila_SierraDeLaPaila")
+
+SierradeZapalinameCoahuila.shp <- SierradeZapalinameCoahuila.shp %>% 
+  mutate(desert = "MexicanCoahuila_SierraDeLaZapalina")
+
+Sonoran_dis.shp <- Sonoran_dis.shp %>% 
+  mutate(desert = "NorthAmerica_SonoranDesert")
+
+Tibesti.shp <- Tibesti.shp %>% 
+  mutate(desert = "Tibesti")
+
+Touran.shp <- Touran.shp %>% 
+  mutate(desert = "Iran Touran Area")
+
+Zifaf.shp <- Zifaf.shp %>% 
+  mutate(desert = "Farasan_Zifaf")
+```
+
+
+# Join polygons with dataset
+```{r}
+polygons <- mget(ls(envir = globalenv(), pattern = "\\.shp$"))
+```
+
+```{r}
+saveRDS(polygons, here::here("./data/analysis/polygons.RData"))
+```
+
+```{r}
+#polygons <- readRDS(here::here("./data/analysis/polygons.RData"))
+```
+
+
+
+# Determine whether polygons are within arid/biome regions
+```{r}
+# Biomes
+biomes <- read_sf(here::here("data/gis_data/biomes/Ecoregions2017/Ecoregions2017.shp"))
+
+# Arid areas
+arid <- raster(here::here("data/gis_data/global-ai_et0/ai_et0/ai_et0.tif"))
+```
+
+
+## Sonoran, Peru, Chile and China polygons consist of multiple polygons -> combine them, otherwise R will give errors
+```{r}
+Sonoran_dis.shp <- st_cast(Sonoran_dis.shp, "POLYGON")
+
+China_desert_dis.shp <- st_cast(China_desert_dis.shp, "POLYGON")
+
+PER_CoastDesert.shp <- st_cast(PER_CoastDesert.shp, "POLYGON")
+
+Chile.shp <- st_cast(Chile.shp, "POLYGON")
+```
+
+```{r}
+polygons <- mget(ls(envir = globalenv(), pattern = "\\.shp$"))
+```
+
+## Arid regions
+```{r}
+mean_arid_extract <- lapply(polygons, function(x) exact_extract(arid,x,fun=c("mean", "stdev")))
+
+mean_arid_df <- do.call(rbind.data.frame, mean_arid_extract)
+
+table(mean_arid_df$mean < 2000)
+
+# 30 polygons fall within arid definition, 4 not
+
+no_arid <- lapply(mean_arid_extract, function(x) filter(x, mean > 2000)) 
+no_arid <- do.call(rbind.data.frame, no_arid)
+
+# Binalood.shp
+# GreatBasinNP.shp
+# Heydari.shp
+# SierradeZapalinameCoahuila.shp
+```
+
+## Biome regions
+```{r}
+sf::sf_use_s2(FALSE)
+
+# Test run -> working
+
+#test <- st_intersection(Air_mountains.shp, biomes)
+#test$area <- st_area(test)
+#test %>% 
+#  mutate_at(c("area"), as.numeric) %>% 
+#  slice(which.max(area))
+
+
+# Intersect with sf package
+intersec <- lapply(polygons, function(x) st_intersection(x, biomes))
+
+# Calculate area and filter for max area and biome type
+biome_list <- lapply(intersec, function(x) slice(x, which.max(SHAPE_AREA)))
+biome_list_df <- list2DF(biome_list)
+
+# Air_mountains: Tropical & Subtropical Grasslands, Savannas & Shrublands
+# Central Namib Polygon: Tropical & Subtropical Grasslands, Savannas & Shrublands
+# El_Rawakeeb_Flora_Sudan: Tropical & Subtropical Grasslands, Savannas & Shrublands
+# Flora_Assaba_Mauritanie: Tropical & Subtropical Grasslands, Savannas & Shrublands
+# Chile: Montane Grasslands & Shrublands
+# China_desert: Temperate Grasslands, Savannas & Shrublands
+# Peru: Montane Grasslands & Shrublands
+# Everything else: Deserts & Xeric Shrublands
+```
+
+
+## Add column with arid/biome information
+
+Chile: desert_arid
+China: desert_arid
+China_TenggerDesert: desert
+Egypt: desert
+Farasan_AlKabir: desert
+Farasan_Sajid: desert
+Farasan_Zifaf: desert
+Farasan_Qummah: desert
+Farasan_Dumsuq: desert
+Farasan_Dushak: desert
+India: desert
+Iran Fereizi: desert_biome
+Iran Heydari: desert_biome
+Iran Isfahan Province: desert
+Iran Kavir Region: desert
+Iran Sistan Baluchestan Province: desert
+Iran Southern Khorasan: desert
+Iran Touran Area: desert
+Iran Yahya Abad: desert
+Libya: desert
+Mauritania_Assaba: desert_arid
+MexicanCoahuila_SierraDeLaPaila: desert
+MexicanCoahuila_SierraDeLaZapalina: desert_biome
+NamibDesert: desert_arid
+NamibDesert_Gobabeb: desert
+NorthAmerica_SonoranDesert: desert
+NorthAmerica_GreatBasin: desert_biome
+Peru: desert_arid
+SaharaDesert_AirMassif: desert_arid
+SaharaDesert: desert
+SaharaDesert_JebelUweinat: desert
+Sudan_KhartoumState: desert_arid
+Tibesti: desert
+Uzbekistan_VozrozhdeniyaIsland: desert
+
+
+```{r}
+polygons_arid <- c("Chile", "China", "Mauritania_Assaba", "NamibDesert", "Peru", "SaharaDesert_AirMassif", "Sudan_KhartoumState")
+polygons_biome <- c("Iran Fereizi", "Iran Heydari", "MexicanCoahuila_SierraDeLaZapalina", "NorthAmerica_GreatBasin")
+```
+
+```{r}
+polygons_df <- sf::st_as_sf(data.table::rbindlist(polygons, fill = TRUE)) %>% 
+  dplyr::select(desert, geometry)
+
+polygons_df$desert_both <- ifelse(polygons_df$desert %in% polygons_arid, 'desert_arid', ifelse(polygons_df$desert %in% polygons_biome, 'desert_biome', 'desert'))
+```
+
+
+## Add column with island/mainland category
+```{r}
+polygons_island <- c("Farasan_AlKabir", "Farasan_Sajid", "Farasan_Zifaf", "Farasan_Qummah", "Farasan_Dumsuq", "Farasan_Dushak")
+polygons_df$island.mainland <- ifelse(polygons_df$desert %in% polygons_island, "Island", "Mainland")
+```
+
+
+## Save polygon information
+```{r}
+write_sf(polygons_df, here::here("./data/analysis/non_gift_checklists.shp"))
+```

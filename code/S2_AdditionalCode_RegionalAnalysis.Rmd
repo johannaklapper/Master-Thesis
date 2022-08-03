@@ -1,0 +1,551 @@
+---
+title: "AdditionalCode_RegionalAnalysis"
+author: "Johanna Klapper"
+date: "7/29/2022"
+output: html_document
+---
+
+Additional Code: Environmental distance and environmental drivers for regions, not checklists.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load data
+```{r}
+# Continent shape
+continents.sf <- read_sf(here::here("data/analysis/continents/continent.shp"))
+
+# Coarse arid raster file
+arid_coarse <- raster(here::here("data/gis_data/global-ai_et0/ai_et0/arid_coarse.tif"))
+
+# Biomes
+biomes <- read_sf(here::here("data/gis_data/biomes/Ecoregions2017/Ecoregions2017.shp"))
+```
+
+
+# Data preparation
+
+## Limit biomes to desert biome
+```{r}
+# Visualize biomes
+desert_biomes <- biomes[biomes$BIOME_NUM == 13, ] %>% 
+  st_make_valid()
+```
+
+## Transform aridity raster into shapefile
+```{r}
+# prepare aridity raster to plot with ggplot
+library(stars)
+arid_plot <- read_stars(here::here("./data/gis_data/global-ai_et0/ai_et0/arid_coarse.tif"))
+arid_sf <- st_as_sf(arid_plot, as_points = FALSE, merge = TRUE)
+```
+
+
+## Divide desert areas into main regions
+```{r}
+desert.areas.comb <- st_join(arid_sf, desert_biomes)
+plot(desert.areas.comb$geometry)
+
+ggplot(data = continents.sf) +
+  geom_sf(aes(fill = CONTINENT))
+
+desert.areas.cont <- st_intersection(desert.areas.comb, continents.sf)
+
+desert.areas.reg <- desert.areas.cont %>% 
+  group_by(CONTINENT) %>% 
+  summarise()
+
+ggplot(desert.areas.reg) +
+  geom_sf(aes(fill = CONTINENT))
+```
+
+```{r}
+write_sf(desert.areas.reg, here::here("./data/analysis/desert.reg.shp")) 
+```
+
+
+# Species per region
+
+## Row sums per region
+```{r}
+species_data_bin_cont <- merge(species, unique(polygons_data), by = "desert") %>% 
+  dplyr::select(species, contnnt) %>% 
+  mutate(count = 1) %>% 
+  unique() %>% 
+  pivot_wider(names_from=species,values_from = count,values_fill = 0,) %>% 
+  as.data.frame()
+
+rownames(species_data_bin_cont) <- species_data_bin_cont$contnnt
+
+species_matrix_cont <- species_data_bin_cont %>% dplyr::select(-contnnt)
+
+spec_num_cont <- rowSums(species_matrix_cont) %>% 
+  as.data.frame() %>% 
+  rownames_to_column() %>% 
+  dplyr::rename(continent = rowname,
+                spec = '.')
+```
+
+
+## Species per area (per region)
+```{r}
+ggplot(data = spec_num_cont, aes(continent, spec)) +
+  geom_col()
+
+# maybe make this as well per area?
+```
+
+
+```{r}
+area_cont <- model_data %>% 
+  group_by(continent) %>% 
+  summarise(sum = sum(Area), .groups = "keep") 
+
+area_total <- sum(model_data$Area)
+
+area_cont$area_prop <- area_cont$sum / area_total
+
+spec_num_cont <- merge(spec_num_cont,area_cont, by = "continent")
+
+ggplot(data = spec_num_cont, aes(continent, spec/sum)) +
+  geom_col()
+```
+
+
+
+# Environmental data for general desert areas
+
+## Load data
+```{r}
+desert.reg <- read_sf(here::here("./data/analysis/desert.reg.shp"))
+```
+
+
+
+## Area
+```{r}
+sf::sf_use_s2(FALSE)
+area_des_reg <- st_area(desert.reg) %>% 
+  as.data.frame()
+
+# sf::sf_use_s2(FALSE) -> Sonoran.shp was giving a weird error, this solved it
+```
+
+
+## Isolation
+```{r}
+# waiting for Pierre's code
+```
+
+
+## Annual mean temperature
+```{r}
+mean_temp_extract_des_reg <- exact_extract(mean_temp, desert.reg,fun=c("mean", "stdev"))
+```
+
+
+## Temperature seasonality
+```{r}
+temp_seas_extract_des_reg <- exact_extract(temp_seas, desert.reg,fun=c("mean", "stdev"))
+```
+
+
+## Annual mean precipitation
+```{r}
+mean_prec_extract_des_reg <- exact_extract(mean_prec, desert.reg,fun=c("mean", "stdev"))
+```
+
+
+## Precipitation seasonality
+```{r}
+prec_seas_extract_des_reg <- exact_extract(prec_seas, desert.reg,fun=c("mean", "stdev"))
+```
+
+
+## Mean altitude
+```{r}
+mean_alt_extract_des_reg <- exact_extract(mean_alt, desert.reg,fun=c("mean", "stdev"))
+```
+
+
+## Elevational range
+```{r}
+# Taking the single highest and single lowest point and taking the absolute difference
+
+elev_max_max_des_reg <- exact_extract(max_alt, desert.reg,fun=c("max")) %>% 
+  as.data.frame()
+
+elev_min_min_des_reg <- exact_extract(min_alt, desert.reg,fun=c("max")) %>% 
+  as.data.frame()
+
+
+elev_range_des_reg <- elev_max_max_des_reg$. - elev_min_min_des_reg$. %>% 
+  as.data.frame()
+elev_range_des_reg <- dplyr::rename(elev_range_des_reg, Range = .)
+```
+
+## Mean TRI (terrain ruggedness index)
+```{r}
+mean_tri_extract_des_reg <- exact_extract(TRI, desert.reg,fun=c("mean", "stdev"))
+```
+
+
+
+
+## Unlist lists and create one dataframe
+```{r}
+desert_names_df_des_reg <- desert.reg %>% 
+  dplyr::select(CONTINENT) %>% 
+  st_drop_geometry()
+
+area_df_des_reg <- area_des_reg %>% 
+  dplyr::rename(Area = '.') %>% 
+  units::drop_units()
+
+mean_temp_df_des_reg <- mean_temp_extract_des_reg %>% 
+  dplyr::rename(Temp = mean,
+         Temp_sd = stdev)
+
+temp_seas_df_des_reg <- temp_seas_extract_des_reg %>% 
+  dplyr::rename(seasT = mean,
+         seasT_sd = stdev) %>% 
+  mutate(seasT = seasT/100)
+
+mean_prec_df_des_reg <- mean_prec_extract_des_reg %>% 
+  dplyr::rename(Prec = mean,
+         Prec_sd = stdev)
+
+prec_seas_df_des_reg <- prec_seas_extract_des_reg %>% 
+  dplyr::rename(seasP = mean,
+        seasP_sd = stdev)
+
+mean_alt_df_des_reg <- mean_alt_extract_des_reg %>% 
+  dplyr::rename(Alt = mean,
+         Alt_sd = stdev)
+
+mean_tri_df_des_reg <- mean_tri_extract_des_reg %>% 
+  dplyr::rename(TRI = mean,
+         TRI_sd = stdev)
+
+
+
+# Combine dfs
+environment_data_des_reg <- bind_cols(desert_names_df_des_reg, area_df_des_reg, mean_temp_df_des_reg, temp_seas_df_des_reg, mean_prec_df_des_reg, prec_seas_df_des_reg, mean_alt_df_des_reg, elev_range_des_reg, mean_tri_df_des_reg)
+
+row.names(environment_data_des_reg) <- environment_data_des_reg$CONTINENT
+
+environment_data_des_reg <- environment_data_des_reg %>% 
+  dplyr::rename(continent = CONTINENT)
+```
+
+
+## Save dataset
+```{r}
+write.csv(environment_data_des_reg, here::here("./data/analysis/environment_data_des_reg.csv"), row.names = TRUE)
+```
+
+
+
+## Mean soil - des_reg
+```{r}
+mean_soil_extract_des_reg <- exact_extract(soil_1, desert.reg$geometry)
+
+names(mean_soil_extract_des_reg) <- desert.reg$CONTINENT
+
+soil_frac_des_reg <- lapply(mean_soil_extract_des_reg, function(x) {
+  as.data.frame(x) %>% 
+  group_by(value) %>% 
+  dplyr::summarise(sum = sum(coverage_fraction)) %>% 
+  mutate(n = sum(sum),
+         frac = sum/n) %>% 
+  dplyr::select(value, frac)
+})
+
+soil_frac_df_des_reg <- do.call(rbind.data.frame, soil_frac_des_reg) %>% 
+  rownames_to_column()
+
+soil_frac_df_des_reg_names <- str_remove(soil_frac_df_des_reg$rowname, pattern = "\\.\\d+$")
+
+soil_frac_df_des_reg$continent <- soil_frac_df_des_reg_names
+```
+
+```{r}
+soil_matrix <- pivot_wider(soil_frac_df_des_reg, id_cols = continent, names_from = value, values_from = frac) %>% 
+  column_to_rownames(var = "continent")
+
+soil_matrix[is.na(soil_matrix)] <- 0
+```
+
+```{r}
+soil_sim <- diversity(soil_matrix, "inv")
+hist(soil_sim, breaks = seq(0, 12, by = 0.2))
+range(soil_sim)
+```
+
+```{r}
+soil_sim_df <- soil_sim %>% 
+  as.data.frame() %>% 
+  rownames_to_column() %>% 
+  dplyr::rename(continent = rowname,
+                Soil = '.') 
+```
+
+
+
+# Inter annual precipitation
+```{r}
+desert.names.reg <- desert.reg %>% 
+  unique() %>% 
+  dplyr::select(CONTINENT) %>% 
+  st_drop_geometry()
+
+
+path <- c("E:/MasterThesis/prec")
+setwd(path)
+files.prec <- list.files(path = path, pattern = paste0(1981, "_"))
+prec.raster <- sapply(files.prec, function(x) raster(x), USE.NAMES = TRUE)
+prec.extract <- sapply(prec.raster, function(x) exact_extract(x, as_Spatial(desert.reg), fun = c("mean")))
+
+
+prec.extract.df.reg <- prec.extract %>% 
+  as.data.frame() %>% 
+  mutate(mean.1981 = rowMeans(across(where(is.numeric)))) %>% 
+  cbind(desert.names.reg) %>% 
+  dplyr::select(CONTINENT, mean.1981)
+
+
+for (i in 1982:2010) {
+
+  path <- c("E:/MasterThesis/prec")
+  setwd(path)
+  files.prec <- list.files(path = path, pattern = paste0(i, "_"))
+  prec.raster <- sapply(files.prec, function(x) raster(x), USE.NAMES = TRUE)
+  prec.extract <- sapply(prec.raster, function(x) exact_extract(x, as_Spatial(desert.reg), fun = c("mean")))
+
+  prec.extract <- prec.extract %>% 
+    as.data.frame() %>% 
+    mutate(mean = rowMeans(across(where(is.numeric)))) %>% 
+    dplyr::select(mean)
+  names(prec.extract) <- paste0("mean.", i)
+  
+  prec.extract.df.reg <- cbind(prec.extract.df.reg, prec.extract)
+}
+
+write.csv(prec.extract.df.reg, here::here("./data/analysis/prec.extract.reg.81-10.csv"), row.names = FALSE)
+```
+
+```{r}
+prec.reg.sd <- prec.extract.df.reg %>%
+  group_by(CONTINENT) %>% 
+  mutate(interP = sd(across(where(is.numeric)))) %>% 
+  dplyr::select(CONTINENT, interP) %>% 
+  dplyr::rename(continent = CONTINENT)
+
+write.csv(prec.reg.sd, here::here("./data/analysis/prec.reg.sd.81-10.csv"), row.names = FALSE)
+```
+
+
+```{r}
+environment.data.des.reg.df <- merge(environment_data_des_reg, soil_sim_df, by = "continent") %>% 
+  merge(prec.reg.sd, by = "continent")
+```
+
+
+## Save dataset
+```{r}
+write.csv(environment.data.des.reg.df, here::here("./data/analysis/environment_data_des_reg_df.csv"), row.names = FALSE)
+```
+
+
+
+
+# PCA - Environmental distance of regions
+
+## Load data
+```{r}
+env_pred_dataset_reg <- read.csv(here::here("./data/analysis/environment_data_des_reg_df.csv"), row.names = 1)
+```
+
+
+## Selecting necessary columns
+```{r}
+env_pred_analysis_reg <- env_pred_dataset_reg %>% 
+  dplyr::select(-c(seasT_sd, seasP_sd, Alt_sd, TRI_sd)) %>% 
+  drop_na()
+```
+
+```{r}
+ggpairs(env_pred_analysis_reg, upper = list(continuous = wrap(ggally_cor, ggally_cordigits=2)))
+```
+
+-> The distributions do not look too good, therefore I will use the log
+
+```{r}
+env_pred_analysis_log_reg <- log(env_pred_analysis_reg +1) # +1 to avoid Inf numbers
+```
+
+
+```{r}
+pairs_reg <- ggpairs(env_pred_analysis_log_reg, upper = list(continuous = wrap(ggally_cor, digits = 2, size = 5))) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=8),
+        axis.text.y = element_text(size = 8),
+        strip.text = element_text(size = 12)) 
+pairs_reg
+
+ggsave("pairsplot_reg.png", pairs_reg, device = "png", path = here::here("./data/results/"), width = 25, height = 23, units = "cm")
+```
+
+
+## PCA
+```{r}
+pca.reg <- PCA(env_pred_analysis_reg, quanti.sup = 1)
+```
+
+### Plotting preparation
+```{r}
+region <- read_sf(here::here("./data/analysis/desert.reg.shp"))
+
+env_pred_dataset_na_reg <- env_pred_dataset_reg %>% 
+  drop_na() %>% 
+  rownames_to_column()
+
+pca_poly_data_reg <- region %>% 
+  st_drop_geometry() %>% 
+  filter(CONTINENT %in% env_pred_dataset_na_reg$rowname) %>% 
+  distinct(CONTINENT, .keep_all = TRUE) 
+```
+
+
+## Plotting with supp.var Area
+```{r}
+# extract pc scores for first two component and add to dataframe
+
+pca.plot.reg <- data.frame(rep(NA, 7))
+pca.plot.reg$pc1 <- pca.reg$ind$coord[, 1] # indexing the first column
+pca.plot.reg$pc2 <- pca.reg$ind$coord[, 2]  # indexing the second column
+pca.plot.reg$pc3 <- pca.reg$ind$coord[, 3]  # indexing the third column
+pca.plot.reg$continent <- names(pca.reg$ind$dist)
+pca.plot.reg <- merge(pca.plot.reg, pca_poly_data_reg, by.x = "continent", by.y = "CONTINENT")
+
+pca.vars.sup.reg <- pca.reg$quanti.sup$coord %>% 
+  data.frame
+pca.vars.sup.reg <- pca.vars.sup.reg * 4
+pca.vars.sup.reg$vars <- rownames(pca.vars.sup.reg)
+
+#We also need to extract the data for the variable contributions to each of the pc axes.
+
+pca.vars.reg <- pca.reg$var$coord %>% 
+  data.frame
+pca.vars.reg <- pca.vars.reg * 4
+pca.vars.reg$vars <- rownames(pca.vars.reg)
+pca.vars.m.reg <- melt(pca.vars.reg, id.vars = "vars")
+```
+
+```{r}
+label.reg <- pca.vars.reg$vars
+label.sup.reg <- pca.vars.sup.reg$vars
+```
+
+```{r}
+cols.reg <- RColorBrewer::brewer.pal(8, name = "Dark2")
+```
+
+```{r}
+pca.eig.reg <- pca.reg$eig[ ,2] %>% 
+  as.vector() %>% 
+  as.data.frame()
+
+pca.axes.reg <- ggplot(data = pca.eig.reg, aes(x = fct_inorder(paste0("PC", 1:6), .), y = ., group = FALSE)) +
+  geom_point(size = 2) +
+  geom_line() +
+  labs(x = "PCA axes", y = "Percentage of variance [%]") +
+  theme_bw() +
+  theme(rect = element_rect(size = 0.2))
+```
+
+
+```{r}
+ggsave("pca.axes.reg.png", pca.axes.reg, device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+
+
+### Colored in for regions
+```{r}
+fig.2.reg <- ggplot() +
+  geom_point(data = pca.plot.reg, aes(x = pc1, y = pc2, fill = continent, col = continent), pch = 21, size = 3.5) +
+  scale_fill_manual(values = cols.reg) +
+  scale_color_manual(values = cols.reg) +
+  #scale_fill_brewer(palette = "Dark2", direction = 1) +
+  #scale_color_brewer(palette = "Dark2", direction = 1) +
+  geom_segment(data = pca.vars.reg, aes(x = 0, y = 0, xend = Dim.1, yend = Dim.2), size = 1, col = "black", arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.1*1.2, y = Dim.2*1.2, label = label.reg), data = pca.vars.reg, check_overlap = FALSE, col = "black", size = 6) +
+  geom_segment(data = pca.vars.sup.reg, aes(x = 0, y = 0, xend = Dim.1, yend = Dim.2), size = 1, col = "blue", linetype = "dashed",  arrow = arrow(length = unit(0.3,"cm"))) +
+  geom_text(aes(x = Dim.1*1.2, y = Dim.2*1.2, label = label.sup.reg), data = pca.vars.sup.reg, check_overlap = TRUE, col = "blue", size = 6) +
+  theme_bw() +
+  theme(legend.title = element_text(size = 15),
+        legend.text = element_text(size = 15),
+        legend.position = c(0.15, 0.88),
+        legend.box.background = element_rect(colour = "black"),
+        axis.title = element_text(size = 16))+
+  labs(x = "PC 1 (-.-%)", y = "PC 2 (-.-%)", fill = "Region", col = "Region")+
+  guides(fill=guide_legend(ncol=2, keywidth = 0.6, keyheight = 0.6)) +
+  xlim(-6, 5)
+fig.2.reg
+
+#fig.2.reg <- ggMarginal(fig.2a.reg, groupFill = TRUE, groupColour = TRUE)
+ggsave("figure2.reg.png", fig.2.reg, device = "png", path = here::here("./data/results/"), width = 29, height = 18, units = "cm")
+```
+
+
+
+# Model - per region
+```{r}
+Asia <- model_data_log_main %>% 
+  filter(continent == "Asia")
+
+glm.asia <- glm.nb(spec ~ Area + Range + seasT + Temp + Prec + seasP + Alt + TRI + Soil + Temp_sd + Prec_sd, data = Asia)
+summary(glm.asia)
+```
+
+```{r}
+North_Africa <- model_data_log_main %>% 
+  filter(continent == "North Africa")
+
+glm.naf <- glm.nb(spec ~ Area + Range + seasT + Temp + Prec + seasP + Alt + TRI + Soil + Temp_sd + Prec_sd, data = North_Africa)
+summary(glm.naf)
+```
+
+```{r}
+North_America <- model_data_log_main %>% 
+  filter(continent == "North America")
+
+glm.na <- glm.nb(spec_ ~ Area + Range + seasT + Temp + Prec + seasP + Alt + TRI + Soil + Temp_sd + Prec_sd, data = North_America)
+summary(glm.na)
+```
+
+```{r}
+South_Africa <- model_data_log_main %>% 
+  filter(continent == "South Africa")
+
+glm.saf <- glm.nb(spec ~ Area + Range + seasT + Temp + Prec + seasP + Alt + TRI + Soil + Temp_sd + Prec_sd, data = South_Africa)
+summary(glm.saf)
+```
+
+```{r}
+South_America <- model_data_log_main %>% 
+  filter(continent == "South America")
+
+glm.sa <- glm(spec ~ Area + Range + seasT + Temp + Prec + seasP + Alt + TRI + Soil + Temp_sd + Prec_sd, data = South_America)
+summary(glm.sa)
+```
+
+```{r}
+Oceania <- model_data_log_main %>% 
+  filter(continent == "Oceania")
+
+glm.oc <- glm(spec ~ Area + Range + seasT + Temp + Prec + seasP + Alt + TRI + Soil + Temp_sd + Prec_sd, data = Oceania)
+summary(glm.oc)
+```

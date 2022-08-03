@@ -1,0 +1,716 @@
+---
+title: "SpeciesDiversity_Composition"
+author: "Johanna Klapper"
+date: "6/1/2022"
+output: html_document
+---
+
+This Markdown contains:
+- Species dataset preparation
+- Analysis of endemic/generalist species
+- Species richness/area-weighted species richness
+- NMDS Analysis
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Load packages
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(vegan)
+library(sf)
+library(sp)
+library(reshape2)
+library(seriation)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(kableExtra)
+```
+
+
+
+# Load data
+```{r}
+# gift dataset
+gift_species <- readRDS(here::here("./data/analysis/20220524_GIFT_desert_checklist.rds"))
+gift_desert_perc <- readRDS(here::here("./data/analysis/20220524_GIFT_desert_envpred.rds")) # percentage of area covered by desert per checklist
+
+# non-gift dataset
+check_species <- read.csv(here::here("./data/checklists/processed/dataset_proc.csv"))
+
+# checklist polygons
+polygons_data <- read_sf(here::here("./data/analysis/polygons_data.shp"))
+```
+
+
+# Species dataset 
+
+## Non-gift dataset
+```{r}
+# select necessary columns
+check_species_short <- check_species %>% 
+  dplyr::select(species, native, endemic, desert)
+```
+
+
+## Gift dataset
+```{r}
+glimpse(gift_species)
+```
+
+### Collect entity IDs of checklists that have to be excluded
+```{r}
+# checklists excluded because not a desert biome (or adjacent biome)
+biome_exclude_biome <- gift_desert_perc %>% 
+  filter(!biome %in% c("Deserts & Xeric Shrublands", "Mediterranean Forests, Woodlands & Scrub", "Temperate Grasslands, Savannas & Shrublands", "Tropical & Subtropical Grasslands, Savannas & Shrublands", "Montane Grasslands & Shrublands")) %>%
+  dplyr::select(entity_ID)
+
+# checklists excluded because percentage of area covered by desert is lower than 70 %
+biome_exclude_arid <- gift_desert_perc %>% 
+  filter(perc_biome_desert != 0 & perc_biome_desert < 70) %>%  
+  dplyr::select(entity_ID)
+
+# alll checklists that have to be excluded
+biome_exclude <- bind_rows(biome_exclude_biome, biome_exclude_arid)
+```
+
+```{r}
+# 'Nullarbor, Australia' exists twice -> rename one Nullarbor, Australia to Nullarbor Australia (2)
+gift_species <- gift_species %>% 
+  mutate(geo_entity = case_when(list_ID == "14770" ~ "Nullarbor, Australia (2)",
+                                 TRUE ~ geo_entity))
+```
+
+### Filter gift dataset by entity ID
+```{r}
+gift_species_short <- gift_species %>% 
+  dplyr::select(species, native, end_list, geo_entity, entity_ID) %>% 
+  mutate_at("entity_ID", as.numeric) %>% 
+  filter(!entity_ID %in% biome_exclude$entity_ID) %>% 
+  dplyr::rename(endemic = end_list,
+         desert = geo_entity) %>% 
+  mutate_at("endemic", as.numeric) %>% 
+  dplyr::select(-entity_ID) %>% 
+  filter(!desert %in% c("Patos", "Salsipuedes", "Alcatraz")) #no environmental data available for those three areas
+
+length(unique(gift_species_short$desert))
+length(unique(gift_species_short$species))
+```
+
+## Combine gift and non-gift dataset
+```{r}
+species_data <- bind_rows(check_species_short, gift_species_short)
+
+glimpse(species_data)
+```
+
+
+## Endemic species
+```{r}
+# endemic on region scale
+species_data_reg <- species_data %>%
+  merge(polygons_data, by = "desert") %>% 
+  dplyr::select(contnnt, species)
+
+
+continent <- c("Asia", "North America", "North Africa", "South America", "South Africa", "Oceania")
+
+tempList <- vector("list", length(continent))
+tempList.extra <- vector("list", length(continent))
+tempList.end <- vector("list", length(continent))
+
+
+for (i in 1:6) {
+
+  tempList[i] <- species_data_reg %>% 
+    filter(contnnt == continent[i]) %>% 
+    dplyr::select(species) %>% 
+    unique()
+
+  tempList.extra[i] <- species_data_reg %>% 
+    filter(contnnt != continent[i]) %>% 
+    dplyr::select(species) %>% 
+    unique()
+
+  tempList.end[i] <- setdiff(tempList[[i]], tempList.extra[[i]]) %>% as.data.frame()
+}
+
+
+
+end.species <- unlist(tempList.end) %>% 
+  unique() %>% 
+  as.data.frame() %>% 
+  dplyr::rename(species = '.')
+
+species_data <- species_data %>% 
+  mutate(endemic.reg = ifelse(species %in% end.species$species, "endemic", "non-endemic"))
+```
+
+
+## Save species dataset
+```{r}
+write.csv(species_data, here::here("./data/analysis/species.csv"), row.names = FALSE)
+```
+
+
+
+
+
+# Load data
+```{r}
+species_data <- read.csv(here::here("./data/analysis/species.csv"))
+```
+
+# Some preparation
+```{r}
+# if species is endemic, add the region they are endemic to
+species_data <- species_data %>% 
+  merge(polygons_data, by = "desert") %>% 
+  mutate(endemic.reg2 = ifelse(endemic.reg == "endemic", contnnt, "non-endemic"))
+```
+
+```{r}
+# check that there's no checklist missing
+setdiff(species_data$desert, polygons_data$desert)
+```
+
+
+# Some general analysis
+```{r}
+# Number of species in gift dataset
+length(unique(gift_species_short$species))
+
+# Number of checklists in gift dataset
+length(unique(gift_species_short$entity_ID))
+
+# Number of species in non-gift dataset
+length(unique(check_species_short$species))
+
+# Number of checklists in non-gift dataset
+length(unique(check_species_short$desert))
+```
+
+```{r}
+# Number of checklists
+length(unique(species_data$desert))
+
+# Number of species total
+length(unique(species_data$species))
+```
+
+
+# Analysis of endemic species
+
+## Data preparation
+```{r}
+spec.data.end <- species_data %>% 
+  distinct(species, .keep_all = TRUE) %>% 
+  group_by(endemic.reg2) %>% 
+  summarise(n = n())
+
+spec.data.end$endemic.reg2 <- factor(spec.data.end$endemic.reg2, levels = c("non-endemic", "North America", "Asia", "South America", "Oceania", "South Africa", "North Africa"), ordered = TRUE)
+```
+
+## Color scale
+```{r}
+col.regions <- scales::brewer_pal("qual", palette = "Dark2")
+col.regions(7)
+
+fill.regions <- c("#A6761D", "#7570B3", "#1B9E77", "#E6AB02", "#E7298A", "#66A61E", "#D95F02")
+```
+
+## Plotting
+```{r}
+ggplot(data = spec.data.end, aes(x = endemic.reg2, y = n, fill = endemic.reg2)) +
+  geom_segment(aes(xend=endemic.reg2, yend=0), size = 1) +
+  geom_point(size=7, aes(color = endemic.reg2)) +
+  scale_color_manual(values = fill.regions) +
+  scale_x_discrete(labels=c("non-endemic", "North \nAmerica", "Asia", "South \nAmerica", "Oceania", "South \nAfrica", "North \nAfrica")) +
+  labs(x = "", y = "Number of (non-)endemic species") +
+  theme_bw() +
+  theme(axis.title = element_text(size = 17),
+        axis.text = element_text(size = 17),
+        legend.position = "none")
+```
+
+```{r}
+ggsave("bar.end.spec.png", last_plot(), device = "png", path = here::here("./data/results/"), width = 27, height = 15, units = "cm")
+```
+
+## Endemism statistics
+```{r}
+# Number of unique species per region
+uni.species <- species_data %>% 
+  distinct(species, contnnt)
+
+table(uni.species$contnnt)
+```
+
+```{r}
+# Number of endemic species per region
+spec.data.end
+```
+
+
+```{r}
+# Percentages of endemic species per region
+
+#Asia
+7557/10607
+
+#North Africa
+3289/6089
+
+#North America 
+12700/13937
+
+#Oceania
+5912/6186
+
+#South Africa 
+3908/4337
+
+#South America 
+6554/7390
+
+
+#non-endemic
+3794/43714
+```
+
+
+```{r}
+# Species in at least 4, 5, 6 regions
+species_data %>% 
+  dplyr::select(species, contnnt) %>% 
+  unique() %>%  
+  group_by(species) %>% 
+  summarise(n = n()) %>% 
+  filter(n >= 6)
+
+# 165 species in 4 regions
+# 44 species in 5 regions
+# 29 species in 6 regions, e.g. Cyperus rotundus, Portulaca oleracea
+```
+
+
+# Diversity analysis
+
+## Presence/absence matrix
+```{r}
+species_data_bin <- species_data %>% 
+  dplyr::select(species, desert) %>% 
+  mutate(count = 1) %>% 
+  unique() %>% 
+  pivot_wider(names_from=species,values_from = count,values_fill = 0,) %>% 
+  as.data.frame()
+
+rownames(species_data_bin) <- species_data_bin$desert
+
+species_matrix <- species_data_bin %>% dplyr::select(-desert) 
+```
+
+```{r}
+head(rowSums(species_matrix))
+```
+
+```{r}
+head(sort(rowSums(species_matrix), decreasing = TRUE))
+```
+
+```{r}
+head(sort(rowSums(species_matrix), decreasing = FALSE))
+```
+
+```{r}
+summary(rowSums(species_matrix))
+```
+
+```{r}
+hist(rowSums(species_matrix),
+     col = "grey", # plot title
+     main = "",
+     xlab = "Number of species") # x-axis title
+```
+
+
+
+## Distribution of species/area across the globe
+
+### Species number per checklist (and per km2)
+```{r}
+# Environmental dataset for area information
+env_pred_dataset <- read.csv(here::here("./data/analysis/env_pred_dataset.csv"), row.names = 1)
+
+
+spec_num <- rowSums(species_matrix) %>% 
+  as.data.frame() %>% 
+  rownames_to_column() %>% 
+  dplyr::rename(desert = rowname,
+                spec = '.')
+
+area_geodis <- env_pred_dataset %>% 
+  rownames_to_column() %>% 
+  dplyr::rename(desert = rowname) %>% 
+  dplyr::select(desert, Area)
+
+spec_geodis <- merge(spec_num, area_geodis, by = "desert") %>% 
+  mutate(spec_area = spec / Area * 1000000) # spec per km2
+
+spec_geodis <- merge(spec_geodis, unique(polygons_data), by = "desert") %>% 
+  distinct(desert, .keep_all = TRUE)
+```
+
+### Centroid of each checklists for plotting
+```{r}
+# Coastlines of the world
+world_coast <- ne_coastline(scale = "medium", returnclass = "sf")
+
+# some polygons are multipolygons -> not possible to get centroid
+no_multi_poly <- st_cast(st_make_valid(polygons_data), "POLYGON") %>% 
+  distinct(desert, .keep_all = TRUE) 
+
+# centroids of polygons
+plots_cent <- geosphere::centroid(as_Spatial(no_multi_poly$geometry)) %>% 
+  as.data.frame() %>% 
+  st_as_sf(coords = c("V1","V2"), crs = st_crs(world_coast))
+
+plots_cent <- st_join(plots_cent, no_multi_poly, join = st_intersects) 
+
+# join with species data
+spec_geodis_sf <- merge(spec_geodis, plots_cent, by = "desert") %>% 
+  dplyr::select(-geometry.x) %>% 
+  st_as_sf() %>% 
+  distinct(desert, .keep_all = TRUE)
+```
+
+### Plotting
+```{r}
+spec_dis_plot <- ggplot()+
+  geom_sf(data = world_coast, size = 0.3) +
+  geom_sf(data = spec_geodis_sf, aes(fill = spec), size = 5.5, shape = 21, col = "transparent", alpha = 0.8) +
+    #scale_size_continuous(name="Absolute Species Number", range=c(1,7), breaks=my.breaks) +
+    #scale_alpha_continuous(name="Absolute Species Number", range=c(0.2, 1), breaks=my.breaks) +
+    #scale_color_gradient(low = "darkgreen", high = "darkgreen", breaks = my.breaks, name="Absolute Species Number") +
+    #scale_fill_gradient(low = "darkgreen", high = "darkgreen", breaks = my.breaks, name="Absolute Species Number", guide = guide_legend(override.aes = list(alpha = 1)) ) +
+    #scale_color_continuous(type = "viridis", name = "Species per km2") +
+  scale_fill_viridis_c(name="Species number per checklist", option = "D", breaks = c(500, 2000,4000)) +
+  theme_bw() +
+  theme(
+      legend.position = c("bottom"),
+      panel.border = element_rect(fill = NA, colour = NA),
+      axis.title = element_blank(),
+      legend.text = element_text(size = 13, angle = 0),
+      legend.title = element_text(size = 13),
+      legend.key.size = unit(0.8, 'cm'),
+      legend.key.width = unit(1, 'cm')) +
+  guides(fill=guide_colorbar(ticks.colour = NA)) +
+  #guides(color = guide_legend(ncol=2), size = guide_legend(ncol = 2), shape = guide_legend(ncol = 2), alpha = guide_legend(ncol = 2)) +
+  coord_sf(crs = "+proj=moll +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+
+spec_dis_plot
+```
+
+
+```{r}
+ggsave("species.distribution.png", spec_dis_plot, device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+
+## Histogram of species richness distribution
+```{r}
+hist.1 <- ggplot(data = spec_geodis) +
+  geom_histogram(aes(x = spec), fill = "darkgreen", col = "black", alpha = 0.7) +
+  theme_classic() +
+  labs(x = "Absolute species numbers per plot", y = "Count")
+
+hist.2 <- ggplot(data = spec_geodis) +
+  geom_histogram(aes(x = log(spec +1)), fill = "darkgreen", col = "black", alpha = 0.7) +
+  theme_classic() +
+  labs(x = "Absolute species numbers per plot (log-transformed)", y = "Count")
+
+hist.12 <- cowplot::plot_grid(hist.1, hist.2, labels = "AUTO", ncol = 2)
+ggsave("hist.specrich.png", hist.12, device = "png", path = here::here("./data/results/"), width = 30, height = 15, units = "cm")
+```
+
+
+## Species richness per region
+
+### Data preparation
+```{r}
+# Species number per region
+spec_num_reg <- species_data %>% 
+  group_by(contnnt) %>% 
+  distinct(species, .keep_all = TRUE) %>% 
+  summarize(sum = n()) %>% 
+  as.data.frame()
+```
+
+```{r}
+# one polygon for each region 
+poly_region <- polygons_data %>% 
+  st_make_valid() %>% 
+  group_by(contnnt) %>% 
+  summarize()
+
+# merge with species data
+spec.rich.region <- spec_num_reg %>% 
+  merge(poly_region, by = "contnnt") %>% 
+  st_as_sf()
+
+# calculate area-weighted species richness
+spec.rich.region$area <- st_area(st_make_valid(spec.rich.region$geometry))
+spec.rich.region$spec.area <- spec.rich.region$sum / spec.rich.region$area *1000000
+```
+
+
+### Plotting
+```{r}
+# order regions by species richness
+spec.rich.region$spec.area <- spec.rich.region$spec.area %>%
+  units::drop_units() 
+spec.rich.region <- spec.rich.region %>% 
+  arrange(spec.area, decreasing = FALSE)
+```
+
+#### Barplot of area-weighted species richness per region
+```{r}
+ggplot(data = spec.rich.region, aes(x = fct_inorder(contnnt), y = spec.area)) +
+  #geom_col() +
+  geom_segment(aes(xend=contnnt, yend=0), size = 1) +
+  geom_point(size=7, aes(color = contnnt)) +
+  scale_color_brewer(palette = "Dark2") +
+  theme_bw() +
+  theme(axis.title = element_text(size = 19),
+        axis.text = element_text(size = 16),
+        legend.position = "none") +
+  labs(x = "", y = bquote("Species/area [" ~ m^-2 ~"]"))
+```
+
+```{r}
+ggsave("species.richness.png", last_plot(), device = "png", path = here::here("./data/results/"), width = 29, height = 20, units = "cm")
+```
+
+
+#### Map plotting of species richness
+```{r}
+# Color scale
+cols.rich.pal <- scales::brewer_pal("seq", "Greens")(7)
+col.pal <- scales::gradient_n_pal(cols.rich.pal) (seq(0.2,1, length.out = 7))
+cols.rich <- c("#9df100", "#82cd00", "#67aa00", "#4e8801", "#366801", "#1f4a01", "#092d01")
+```
+
+
+```{r}
+ggplot()+
+  geom_sf(data = world_coast, size = 0.3) +
+  geom_sf(data = spec.rich.region, aes(fill = contnnt), col = "transparent") +
+    scale_fill_manual(name="Species numbers \nper region", values = c("North America" = cols.rich[7], "Asia" = cols.rich[6], "South America" = cols.rich[5], "Oceania" = cols.rich[4], "North Africa" = cols.rich[3], "South Africa" = cols.rich[2]), labels = c("13937 (NAm)", "10607 (A)" , "7390 (SAm)", "6186 (O)", "6089 (NAf)", "4337 (SAf)")) +
+  theme_bw() +
+  theme(
+      legend.position = "bottom",
+      panel.border = element_rect(fill = NA, colour = NA),
+      axis.title = element_blank(),
+      legend.text = element_text(size = 12),
+      legend.title = element_text(size = 12)) +
+  guides(color = guide_legend(ncol=2), size = guide_legend(ncol = 2), shape = guide_legend(ncol = 2),
+         alpha = guide_legend(override.aes = list(alpha = 1))) +
+  coord_sf(crs = "+proj=moll +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+```
+
+```{r}
+ggsave("species.richness.region.png", last_plot(), device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+
+
+
+# NMDS Analysis
+
+## Stress values for different n of dimensions
+```{r}
+n <- 12
+stress <- vector(length = n)
+for (i in 1:n) {
+    stress[i] <- metaMDS(species_matrix, distance = "chao", k = i)$stress
+}
+
+names(stress) <- paste(1:n, "Dim", sep = " ")
+stress <- as.data.frame(stress) %>% 
+  rownames_to_column(var = "Dimensions")
+
+nmds.stress <- ggplot(data = stress, aes(x = fct_inorder(Dimensions), y = stress)) +
+  geom_col() +
+  labs(x = "NMDS Dimensions", y = "Stress") +
+  theme_bw() +
+  theme(rect = element_rect(size = 0.2))
+nmds.stress
+```
+
+```{r}
+ggsave("nmds.stress.png", nmds.stress, device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+
+## Run NMDS
+```{r}
+spec.NMDS <- metaMDS(species_matrix, k = 12, distance = "chao")
+
+spec.NMDS$stress
+```
+
+
+## Retrieving data from NMDS
+```{r}
+spec.NMDS.species <- as.data.frame(spec.NMDS$species)  
+spec.NMDS.species$species <- rownames(spec.NMDS.species) # column with species names
+spec.NMDS.species <- merge(spec.NMDS.species, species_data, by = "species", all.y = FALSE) %>%  # add information about endemism
+  dplyr::select(-c(native, desert)) %>% 
+  distinct(species, .keep_all = TRUE)
+
+spec.NMDS.sites <- as.data.frame(spec.NMDS$points)
+spec.NMDS.sites$site <- rownames(spec.NMDS.sites)  # create a column of site names, from the rownames of NMDS.scores
+
+spec.NMDS.sites.con <- merge(spec.NMDS.sites, unique(polygons_data), by.x = "site", by.y = "desert") # add information about region, desert definition, etc.
+```
+
+
+### Shepard diagram
+```{r}
+# Create a tibble that contains the data from stressplot
+shepard.df <- tibble(x = stressplot(spec.NMDS)$x,
+       y = stressplot(spec.NMDS)$y,
+       yf = stressplot(spec.NMDS)$yf) %>%
+  # Change data to long format
+  pivot_longer(cols = c(y, yf),
+               names_to = "var")
+
+# Create plot
+shepard.df %>%
+  ggplot(aes(x = x, y = value)) +
+  # Add points just for y values
+  geom_point(data = shepard.df %>% filter(var == "y"), pch = 1, alpha = 0.5, size = 2) +
+  # Add line just for yf values
+  geom_step(data = shepard.df %>%
+              filter(var == "yf"),
+            col = "red",
+            direction = "vh", size = 1) +
+  # Add correlation statistics
+  geom_text(aes(x = 0.25, y = 1.6, label = "Non-metric fit, R-squared = 1
+       Linear fit,         R-squared = 0.993", family = "sans"), col = "black", size = 6) +
+  # Change axis labels
+  labs(x = "Observed Dissimilarity", y = "Ordination Distance") +
+  # Add bw theme
+  theme_bw() +
+  theme(axis.title = element_text(size = 14),
+        axis.text = element_text(size = 11))
+```
+
+```{r}
+ggsave("nmds.shepard.png", last_plot(), device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+
+### NMDS Plot
+
+#### Checklists colored for regions
+```{r}
+fig.31 <- ggplot() +
+  geom_point(data = spec.NMDS.species, aes(x = MDS1, y = MDS2), pch = 1, alpha = 0.3, size = 2.5, stroke = 1.1) +
+  geom_point(data = spec.NMDS.sites.con, aes(x = MDS1, y = MDS2, fill = contnnt), pch = 24, size = 3.5, col = "transparent") +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(fill = "Region", x = "NMDS 1", y = "NMDS 2") +
+  theme_bw() +
+  theme(legend.title = element_text(size = 15),
+        legend.text = element_text(size = 15),
+        legend.position = c(0.25, 0.15),
+        legend.box.background = element_rect(colour = "black"),
+        axis.title = element_text(size = 14),
+        axis.text = element_text(size = 13)) +
+  guides(fill=guide_legend(ncol=2, keywidth = 0.6, keyheight = 0.6))
+```
+
+
+#### Species colored for region they are endemic to
+```{r}
+# color scale
+col.fun <- scales::brewer_pal("qual", "Dark2")
+col.fun(6)
+cols.end <- c("black", "#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02")
+
+# labels
+labels.end <- c("Asia", "North America", "North Africa", "South America", "South Africa", "Oceania")
+
+# plotting  
+fig.32 <- ggplot() +
+  geom_point(data = spec.NMDS.species %>% filter(endemic.reg2 == "non-endemic"), aes(x = MDS1, y = MDS2, col = "black"), pch = 1, size = 3, alpha = 0.4, stroke = 1.1) +
+  scale_color_manual(values = "black", labels = "non-endemic", guide = guide_legend(override.aes = list(alpha = 1))) +
+  geom_point(data = spec.NMDS.species %>% filter(endemic.reg2 != "non-endemic"), aes(x = MDS1, y = MDS2, fill = as.character(endemic.reg2)), pch = 21, size = 3.5, alpha = 0.9, col = "transparent") +
+  scale_fill_brewer(palette = "Dark2", guide = guide_legend(override.aes = list(alpha = 1)), breaks = labels.end) +
+  labs(x = "NMDS 1", y = "NMDS 2", fill = "endemic in", col = "") +
+  theme_bw() +
+  theme(legend.text = element_text(size = 15),
+        legend.position = c(0.77, 0.13),
+        legend.box.background = element_rect(colour = "black"),
+        legend.spacing.y = unit(0.01, 'cm'),
+        legend.key.size = unit(0.4, "cm"),
+        legend.title = element_text(size = 15),
+        legend.margin = margin(t = 0.04, unit='cm'),
+        legend.box.margin = margin(t = 0.04, unit='cm'),
+        axis.text = element_text(size = 14)) +
+  guides(fill=guide_legend(ncol=2, keywidth = 0.6, keyheight = 0.6))
+fig.32
+```
+
+
+#### Checklists colored for region and mainland/island
+```{r}
+fig.33 <- ggplot(spec.NMDS.sites.con) +
+  geom_point(data = spec.NMDS.species, aes(x = MDS1, y = MDS2), pch = 1, stroke = 1.1, size = 4, alpha = 0.2, col = "grey20") +
+  geom_point(data = spec.NMDS.sites.con, aes(x = MDS1, y = MDS2, fill = contnnt, col = contnnt, shape = islnd_m), size = 3.5, stroke = 1.3) +
+  #scale_fill_manual(values = c("darkorange", "darkolivegreen"), guide = guide_legend(override.aes = list(alpha = 1))) +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_color_brewer(palette = "Dark2") +
+  scale_shape_manual(values = c(2, 24)) +
+  labs(x = "NMDS 1", y = "NMDS 2") +
+  theme_bw() +
+  theme(legend.title = element_blank(),
+        legend.text = element_text(size = 15),
+        legend.position = c(0.23, 0.12),
+        legend.box.background = element_rect(colour = "black"),
+        axis.title = element_text(size = 14),
+        axis.text = element_text(size = 13)) +
+  guides(fill=guide_legend(ncol=2, keywidth = 0.6, keyheight = 0.9, override.aes=list(shape = 24)), shape = "none")
+fig.33
+```
+
+
+#### Checklists colored for desert definition
+```{r}
+fig.34 <- ggplot() +
+  geom_point(data = spec.NMDS.species, aes(x = MDS1, y = MDS2), pch = 1, alpha = 0.3, size = 2.5, stroke = 1.1) +
+  geom_point(data = spec.NMDS.sites.con, aes(x = MDS1, y = MDS2, fill = dsrt_bt), pch = 24, size = 4.5, col = "transparent") +
+  scale_fill_manual(values = c( "#D95F02", "#1B9E77", "#7570B3"), labels = c("Overlap", "Aridity", "Biome")) +
+  labs(fill = "Desert definition", x = "NMDS 1", y = "NMDS 2") +
+  theme_bw() +
+  theme(legend.title = element_text(size = 15),
+        legend.text = element_text(size = 15),
+        legend.position = c(0.20, 0.11),
+        legend.box.background = element_rect(colour = "black"),
+        axis.title = element_text(size = 14),
+        axis.text = element_text(size = 13)) +
+  guides(fill=guide_legend(ncol=2, keywidth = 0.6, keyheight = 1))
+fig.34
+```
+
+
+#### Save plots
+```{r}
+ggsave("figure3a.png", fig.31, device = "png", path = here::here("./data/results/"), width = 22, height = 15, units = "cm")
+ggsave("figure3b.png", fig.32, device = "png", path = here::here("./data/results/"), width = 22, height = 15, units = "cm")
+ggsave("figure3c.png", fig.33, device = "png", path = here::here("./data/results/"), width = 22, height = 15, units = "cm")
+ggsave("figure3d.png", fig.34, device = "png", path = here::here("./data/results/"), width = 22, height = 15, units = "cm")
+```

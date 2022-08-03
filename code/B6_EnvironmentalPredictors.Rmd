@@ -1,0 +1,686 @@
+---
+title: "EnvironmentalPredictors"
+author: "Johanna Klapper"
+date: "5/12/2022"
+output: html_document
+---
+
+This Markdown contains:
+- Environmental predictors of non-gift checklists
+- Environmental predictors of gift checklists
+
+
+Environmental predictors:
+- Area
+- Surrounding landmass proportion
+- Annual mean temperature
+- Standard deviation of annual mean temperature
+- Temperature seasonality
+- Annual mean precipitation
+- Standard deviation of annual mean precipitation
+- Precipitation seasonality
+- Elevational range
+- Mean altitude
+- Soil diversity
+- Terrain ruggedness index
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(sf)
+library(raster)
+library(exactextractr)
+library(vegan)
+```
+
+
+# Load environmental rasters
+```{r}
+# Environmental data
+mean_temp <- raster(here::here("./data/analysis/rasters/wc2.0_bio_30s_01.tif"))
+temp_seas <- raster(here::here("./data/analysis/rasters/wc2.0_bio_30s_04.tif"))
+
+mean_prec <- raster(here::here("./data/analysis/rasters/wc2.0_bio_30s_12.tif"))
+prec_seas <- raster(here::here("./data/analysis/rasters/wc2.0_bio_30s_15.tif"))
+
+mean_alt <- raster(here::here("./data/analysis/rasters/mn30_grd/w001001.adf"))
+
+TRI <- raster(here::here("./data/analysis//rasters/mn30_grd_TRI.tif"))
+
+soil_1 <- raster(here::here("./data/analysis/rasters/TAXNWRB_1km.tif"))
+```
+
+
+
+# Non-gift checklists
+
+## Load data
+```{r}
+# Checklist data
+polygons <- readRDS(here::here("./data/analysis/polygons.RData"))
+```
+
+
+## Extract environmental values 
+
+### Desert names
+```{r}
+desert_names <- lapply(polygons, function(x) print(x$desert))
+```
+
+
+### Area
+```{r}
+sf::sf_use_s2(FALSE)
+area <- lapply(polygons, function(x) st_area(x))
+
+# sf::sf_use_s2(FALSE) -> Sonoran.shp was giving a weird error, this solved it
+```
+
+
+### Annual mean temperature
+```{r}
+mean_temp_extract <- lapply(polygons, function(x) exact_extract(mean_temp,x,fun=c("mean", "stdev")))
+```
+
+
+### Temperature seasonality
+```{r}
+temp_seas_extract <- lapply(polygons, function(x) exact_extract(temp_seas,x,fun=c("mean", "stdev")))
+```
+
+
+### Annual mean precipitation
+```{r}
+mean_prec_extract <- lapply(polygons, function(x) exact_extract(mean_prec,x,fun=c("mean", "stdev")))
+```
+
+
+### Precipitation seasonality
+```{r}
+prec_seas_extract <- lapply(polygons, function(x) exact_extract(prec_seas,x,fun=c("mean", "stdev")))
+```
+
+
+### Mean altitude
+```{r}
+mean_alt_extract <- lapply(polygons, function(x) exact_extract(mean_alt,x,fun=c("mean", "stdev")))
+```
+
+
+### Elevational range
+```{r}
+# Taking the single highest and single lowest point and taking the absolute difference
+
+elev_max_max <- lapply(polygons, function(x) exact_extract(mean_alt,x,fun=c("max"))) 
+elev_maxmax_df <- do.call(rbind.data.frame, elev_max_max)
+elev_min_min <- lapply(polygons, function(x) exact_extract(mean_alt,x,fun=c("min")))
+elev_minmin_df <- do.call(rbind.data.frame, elev_min_min)
+
+elev_range <- elev_maxmax_df$c.1898..87..2626..2428..3605..4922..1907..12..7..939..484..39.. - elev_minmin_df$c.389..28..1400..0...2..90..1288..0..0..179..412..0..28..289.. %>% 
+  as.data.frame()
+
+elev_range <- rename(elev_range, Range = .)
+```
+
+
+### Mean TRI (terrain ruggedness index)
+```{r}
+mean_tri_extract <- lapply(polygons, function(x) exact_extract(TRI,x,fun=c("mean", "stdev")))
+```
+
+
+
+## Unlist lists and create one dataframe
+```{r}
+desert_names_df <- do.call(rbind.data.frame, desert_names) %>% 
+  dplyr::rename(desert = c..SaharaDesert_AirMassif....Uzbekistan_VozrozhdeniyaIsland...) %>% 
+  dplyr::select(desert)
+
+area_df <- do.call(rbind.data.frame, area) %>% 
+  dplyr::rename(Area = c.69611959740.4462..5368285178.49214..143684283.460077..40655774698.7612..) %>% 
+  dplyr::select(-c.69611959740.4462..5368285178.49214..143684283.460077..40655774698.7612...1)
+
+mean_temp_df <- do.call(rbind.data.frame, mean_temp_extract) %>% 
+  rename(Temp = mean,
+         Temp_sd = stdev)
+
+temp_seas_df <- do.call(rbind.data.frame, temp_seas_extract) %>% 
+  rename(seasT = mean,
+         seasT_sd = stdev) %>% 
+  mutate(seasT = seasT/100) # division by 100 for better plotting
+
+mean_prec_df <- do.call(rbind.data.frame, mean_prec_extract) %>% 
+  rename(Prec = mean,
+         Prec_sd = stdev)
+
+prec_seas_df <- do.call(rbind.data.frame, prec_seas_extract) %>% 
+  rename(seasP = mean,
+         seasP_sd = stdev)
+
+mean_alt_df <- do.call(rbind.data.frame, mean_alt_extract) %>% 
+  rename(Alt = mean,
+         Alt_sd = stdev)
+
+mean_tri_df <- do.call(rbind.data.frame, mean_tri_extract) %>% 
+  rename(TRI = mean,
+         TRI_sd = stdev)
+
+
+
+
+# Combine dfs
+env_pred <- bind_cols(desert_names_df, area_df, mean_temp_df, temp_seas_df, mean_prec_df, prec_seas_df, mean_alt_df, elev_range, mean_tri_df) %>%
+  mutate(category = 'New')
+
+row.names(env_pred) <- env_pred$desert_name
+```
+
+
+## Save dataset
+```{r}
+write.csv(env_pred, here::here("./data/analysis/env_pred_checklists.csv"))
+```
+
+## Load dataset
+```{r}
+env_pred <- read.csv(here::here("./data/analysis/env_pred_checklists.csv"), row.names = 1) 
+```
+
+
+
+
+# Gift checklists
+
+## Load data
+```{r}
+# Polygons data
+gift_polygons <- read_sf(here::here("./data/analysis/gift_checklists.shp"))
+```
+
+
+### Area
+```{r}
+sf::sf_use_s2(FALSE)
+area_gift <- st_area(gift_polygons) %>% 
+  as.data.frame()
+```
+
+
+### Annual mean temperature
+```{r}
+mean_temp_extract_gift <- exact_extract(mean_temp, gift_polygons,fun=c("mean", "stdev"))
+```
+
+
+### Temperature seasonality
+```{r}
+temp_seas_extract_gift <- exact_extract(temp_seas, gift_polygons,fun=c("mean", "stdev"))
+```
+
+
+### Annual mean precipitation
+```{r}
+mean_prec_extract_gift <- exact_extract(mean_prec, gift_polygons,fun=c("mean", "stdev"))
+```
+
+
+### Precipitation seasonality
+```{r}
+prec_seas_extract_gift <- exact_extract(prec_seas, gift_polygons,fun=c("mean", "stdev"))
+```
+
+
+### Mean altitude
+```{r}
+mean_alt_extract_gift <- exact_extract(mean_alt, gift_polygons,fun=c("mean", "stdev"))
+```
+
+
+### Elevational range
+```{r}
+# Taking the single highest and single lowest point and taking the absolute difference
+
+elev_max_max_gift <- exact_extract(mean_alt, gift_polygons,fun=c("max")) %>% 
+  as.data.frame()
+
+elev_min_min_gift <- exact_extract(mean_alt, gift_polygons,fun=c("min")) %>% 
+  as.data.frame()
+
+
+elev_range_gift <- elev_max_max_gift$. - elev_min_min_gift$. %>% 
+  as.data.frame()
+elev_range_gift <- dplyr::rename(elev_range_gift, Range = .)
+```
+
+
+### Mean TRI (terrain ruggedness index)
+```{r}
+mean_tri_extract_gift <- exact_extract(TRI, gift_polygons,fun=c("mean", "stdev"))
+```
+
+
+
+## Rename columns and create one dataframe
+```{r}
+desert_names_df_gift <- gift_polygons %>% 
+  dplyr::select(desert) %>% 
+  st_drop_geometry()
+
+area_df_gift <- area_gift %>% 
+  dplyr::rename(Area = '.') %>% 
+  units::drop_units()
+
+mean_temp_df_gift <- mean_temp_extract_gift %>% 
+  dplyr::rename(Temp = mean,
+         Temp_sd = stdev)
+
+temp_seas_df_gift <- temp_seas_extract_gift %>% 
+  dplyr::rename(seasT = mean,
+         seasT_sd = stdev) %>% 
+  mutate(seasT = seasT/100)
+
+mean_prec_df_gift <- mean_prec_extract_gift %>% 
+  dplyr::rename(Prec = mean,
+         Prec_sd = stdev)
+
+prec_seas_df_gift <- prec_seas_extract_gift %>% 
+  dplyr::rename(seasP = mean,
+        seasP_sd = stdev)
+
+mean_alt_df_gift <- mean_alt_extract_gift %>% 
+  dplyr::rename(Alt = mean,
+         Alt_sd = stdev)
+
+mean_tri_df_gift <- mean_tri_extract_gift %>% 
+  dplyr::rename(TRI = mean,
+         TRI_sd = stdev)
+
+
+
+# Combine dfs
+environment_data_gift <- bind_cols(desert_names_df_gift, area_df_gift, mean_temp_df_gift, temp_seas_df_gift, mean_prec_df_gift, prec_seas_df_gift, mean_alt_df_gift, elev_range_gift, mean_tri_df_gift) %>% 
+  mutate(category = "GIFT")
+
+row.names(environment_data_gift) <- environment_data_gift$desert
+```
+
+
+## Save dataset
+```{r}
+write.csv(environment_data_gift, here::here("./data/analysis/environment_data_gift.csv"), row.names = FALSE)
+```
+
+## Load dataset
+```{r}
+environment_data_gift <- read.csv(here::here("./data/analysis/environment_data_gift.csv"))
+```
+
+
+
+# Soil variable
+
+The soil variable needs some more calculations. We will extract the proportion of each soil class for each polygon and calculate based on the soil class fractions the dissimilarity index with the inverse Simpson. This way we have again one "value" for each polygon.
+
+## Mean soil - non-gift
+```{r}
+mean_soil_extract <- lapply(polygons, function(x) exact_extract(soil_1,x))
+
+soil_frac <- lapply(mean_soil_extract, function(x) {
+  as.data.frame(x) %>% 
+  group_by(value) %>% 
+  dplyr::summarise(sum = sum(coverage_fraction)) %>% 
+  mutate(n = sum(sum),
+         frac = sum/n) %>% 
+  dplyr::select(value, frac)
+})
+
+names(soil_frac) <- desert_names_df$desert
+
+soil_frac_df <- do.call(rbind.data.frame, soil_frac) %>% 
+  rownames_to_column()
+
+soil_frac_df_names <- str_remove(soil_frac_df$rowname, pattern = "\\.\\d+$")
+
+soil_frac_df$desert <- soil_frac_df_names
+```
+
+
+## Mean soil - gift
+```{r}
+mean_soil_extract_gift <- exact_extract(soil_1, gift_polygons$geometry)
+
+names(mean_soil_extract_gift) <- gift_polygons$desert
+
+soil_frac_gift <- lapply(mean_soil_extract_gift, function(x) {
+  as.data.frame(x) %>% 
+  group_by(value) %>% 
+  dplyr::summarise(sum = sum(coverage_fraction)) %>% 
+  mutate(n = sum(sum),
+         frac = sum/n) %>% 
+  dplyr::select(value, frac)
+})
+
+soil_frac_df_gift <- do.call(rbind.data.frame, soil_frac_gift) %>% 
+  rownames_to_column()
+
+soil_frac_df_gift_names <- str_remove(soil_frac_df_gift$rowname, pattern = "\\.\\d+$")
+
+soil_frac_df_gift$desert <- soil_frac_df_gift_names
+```
+
+
+## Bind soil data and create matrix
+```{r}
+soil_df <- bind_rows(soil_frac_df, soil_frac_df_gift) %>% 
+  dplyr::select(value, frac, desert)
+
+soil_matrix <- pivot_wider(soil_df, id_cols = desert, names_from = value, values_from = frac) %>% 
+  column_to_rownames(var = "desert")
+
+soil_matrix[is.na(soil_matrix)] <- 0
+```
+
+## Compute inverse Simpson
+```{r}
+soil_sim <- diversity(soil_matrix, "inv")
+hist(soil_sim, breaks = seq(0, 12, by = 0.2))
+range(soil_sim)
+```
+
+```{r}
+soil_sim_df <- soil_sim %>% 
+  as.data.frame() %>% 
+  rownames_to_column() %>% 
+  dplyr::rename(desert = rowname,
+                Soil = '.') 
+```
+
+
+# Surrounding landmass proportion
+
+## Non-gift checklists
+```{r}
+# Isolation data comes from another script (surrounding_land_mass_proportion_desert.R)
+iso_poly <- readRDS(here::here("./data/analysis/20220707_desert_slmp.rds"))
+
+# add checklist names
+iso_poly <- iso_poly %>% 
+  dplyr::mutate(desert = c("Farasan_Dumsuq", "Farasan_Dushak", "Farasan_AlKabir", "Farasan_Qummah", "Farasan_Sajid", "Farasan_Zifaf", "SaharaDesert_AirMassif", "Uzbekistan_VozrozhdeniyaIsland", "Iran Fereizi", "NamibDesert", "China", "Egypt", "Sudan_KhartoumState", "Mauritania_Assaba", "NamibDesert_Gobabeb", "NorthAmerica_GreatBasin", "Iran Heydari", "India", "SaharaDesert_JebelUweinat", "Iran Kavir Region", "SaharaDesert", "MexicanCoahuila_SierraDeLaPaila", "MexicanCoahuila_SierraDeLaZapalina", "Tibesti", "Iran Touran Area", "China_TenggerDesert", "Iran Isfahan Province", "Iran Sistan Baluchestan Province", "Iran Southern Khorasan", "Iran Yahya Abad", "Peru", "Libya_Tanezzuft", "NorthAmerica_SonoranDesert", "Chile", "United Arab Emirates", "Death Valley National Park, USA"))
+```
+
+
+## Gift checklists
+```{r}
+polygons_data <- read_sf(here::here("./data/analysis/polygons_data.shp")) # needed to filter for desert entity IDs
+
+iso_gift <- readRDS(here::here("./data/analysis/20220708_GIFT_SLMP.rds")) # Isolation data comes from another script (surrounding_land_mass_proportion_desert.R)
+
+
+iso_gift <- iso_gift %>% 
+  mutate(geo_entity = case_when(entity_ID == "12175" ~ "Nullarbor, Australia (2)",
+                                 TRUE ~ geo_entity)) %>% 
+  dplyr::select(-entity_ID) %>% 
+  dplyr::rename(desert = geo_entity) %>% 
+  filter(desert %in% polygons_data$desert) %>% 
+  drop_na()
+```
+
+```{r}
+iso_all <- bind_rows(iso_gift, iso_poly) %>% 
+  dplyr::select(desert, SLMP)
+```
+
+
+# Merge gift and non-gift data
+```{r}
+env_pred_dataset <- bind_rows(environment_data_gift, env_pred) %>% 
+  merge(soil_sim_df, by = "desert") %>% 
+  merge(iso_all, by = "desert") %>% 
+  column_to_rownames(var = "desert")
+```
+
+
+# Save dataset
+```{r}
+write.csv(env_pred_dataset, here::here("./data/analysis/env_pred_dataset.csv"))
+```
+
+
+
+
+# Inter-annual precipitation variability
+
+Inter-annual variability was added later and is based on monthly precipitation data from 1981 to 2010 from Chelsa V2. As there are 360 raster files and quite big files, the code takes a few hours to run.
+
+## Load data
+```{r}
+polygons_data <- read_sf(here::here("./data/analysis/polygons_data.shp"))
+```
+
+
+## Try outs
+Some try outs to find the most efficient way to work with the raster files. We explored possibilities with the 'raster' and the 'terra' package.
+```{r}
+# Loading data for one year
+path <- c("E:/MasterThesis/prec")
+setwd(path)
+
+files.prec.1990 <- list.files(path = path, pattern = "1990")
+#prec.1990 <- sapply(files.prec.1990, function(x) raster(x), USE.NAMES = TRUE)
+
+prec.1990.terra <-  terra::rast(files.prec.1990) # for terra package
+
+# store yearly data as stack
+#prec.90.stack <- stack(prec.1990)
+```
+
+```{r}
+# Loading data in a bulk
+path <- c("E:/MasterThesis/prec")
+setwd(path)
+
+files.prec <- lapply(1991:2000, function(x) {
+  list.files(path = path, pattern = paste0(x, "_"))
+})
+
+prec.90s.raster <- vector("list", 120)
+
+sapply(files.prec, function(x) {
+  for (i in 1:12) {
+    prec.90s.raster[i] <- raster(x[i])
+    }
+  }, USE.NAMES = TRUE)
+
+#prec.90s.terra <- lapply(files.prec, function(x) {terra::rast(x)})
+```
+
+
+```{r}
+# Loading and extracting data within a for-loop (works)
+library(raster)
+path <- c("E:/MasterThesis/prec")
+setwd(path)
+
+prec.extract.df <- vector("list", 5)
+
+for (i in 1:5) {
+
+  y <- 1991:1995
+  files.prec <- list.files(path = path, pattern = paste0(x[i], "_"))
+  prec.raster <- sapply(files.prec, function(x) raster(x), USE.NAMES = TRUE)
+  prec.extract <- sapply(prec.raster, function(x) exact_extract(x, as_Spatial(polygons_data)))
+  
+  prec.extract.df[i] <- prec.extract
+
+}
+```
+
+
+## Extracting precipitation data
+```{r}
+# Precipitation data is extracted as mean for each checklist with exact_extract for 1991-2010
+desert.names.df <- polygons_data %>% 
+  unique() %>% 
+  dplyr::select(desert) %>% 
+  st_drop_geometry()
+
+
+path <- c("E:/MasterThesis/prec")
+setwd(path)
+files.prec <- list.files(path = path, pattern = paste0(1991, "_"))
+prec.raster <- sapply(files.prec, function(x) raster(x), USE.NAMES = TRUE)
+prec.extract <- sapply(prec.raster, function(x) exact_extract(x, as_Spatial(unique(polygons_data)), fun = c("mean")))
+
+
+prec.extract.df <- prec.extract %>% 
+  as.data.frame() %>% 
+  mutate(mean.1991 = rowMeans(across(where(is.numeric)))) %>% 
+  cbind(desert.names.df) %>% 
+  dplyr::select(desert, mean.1991)
+
+
+for (i in 1992:2010) {
+
+  path <- c("E:/MasterThesis/prec")
+  setwd(path)
+  files.prec <- list.files(path = path, pattern = paste0(i, "_"))
+  prec.raster <- sapply(files.prec, function(x) raster(x), USE.NAMES = TRUE)
+  prec.extract <- sapply(prec.raster, function(x) exact_extract(x, as_Spatial(unique(polygons_data)), fun = c("mean")))
+
+  prec.extract <- prec.extract %>% 
+    as.data.frame() %>% 
+    mutate(mean = rowMeans(across(where(is.numeric)))) %>% 
+    dplyr::select(mean)
+  names(prec.extract) <- paste0("mean.", i)
+  
+  prec.extract.df <- cbind(prec.extract.df, prec.extract)
+}
+
+write.csv(prec.extract.df, here::here("./data/analysis/prec.extract.91-10.csv"), row.names = FALSE)
+```
+
+
+```{r}
+# Precipitation data is extracted as mean for each checklist with exact_extract for 1981-1990
+desert.names.df <- polygons_data %>% 
+  unique() %>% 
+  dplyr::select(desert) %>% 
+  st_drop_geometry()
+
+
+path <- c("E:/MasterThesis/prec")
+setwd(path)
+files.prec <- list.files(path = path, pattern = paste0(1981, "_"))
+prec.raster <- sapply(files.prec, function(x) raster(x), USE.NAMES = TRUE)
+prec.extract <- sapply(prec.raster, function(x) exact_extract(x, as_Spatial(unique(polygons_data)), fun = c("mean")))
+
+
+prec.extract.df.2 <- prec.extract %>% 
+  as.data.frame() %>% 
+  mutate(mean.1981 = rowMeans(across(where(is.numeric)))) %>% 
+  cbind(desert.names.df) %>% 
+  dplyr::select(desert, mean.1981)
+
+
+for (i in 1982:1990) {
+
+  path <- c("E:/MasterThesis/prec")
+  setwd(path)
+  files.prec <- list.files(path = path, pattern = paste0(i, "_"))
+  prec.raster <- sapply(files.prec, function(x) raster(x), USE.NAMES = TRUE)
+  prec.extract <- sapply(prec.raster, function(x) exact_extract(x, as_Spatial(unique(polygons_data)), fun = c("mean")))
+
+  prec.extract <- prec.extract %>% 
+    as.data.frame() %>% 
+    mutate(mean = rowMeans(across(where(is.numeric)))) %>% 
+    dplyr::select(mean)
+  names(prec.extract) <- paste0("mean.", i)
+  
+  prec.extract.df.2 <- cbind(prec.extract.df.2, prec.extract)
+}
+
+write.csv(prec.extract.df.2, here::here("./data/analysis/prec.extract.81-90.csv"), row.names = FALSE)
+```
+
+
+```{r}
+# as some checklists are multipolygons, some rows are multiple times in the dataset
+prec.double <- prec.extract.df %>% 
+  group_by(desert) %>%
+  filter(n()>1) %>% 
+  unique()
+
+prec.double.agg <- aggregate(prec.double[, 2:21], list(prec.double$desert), mean) %>% 
+  dplyr::rename(desert = Group.1)
+
+prec.double.2 <- prec.extract.df.2 %>% 
+  group_by(desert) %>%
+  filter(n()>1) %>% 
+  unique()
+
+prec.double.agg.2 <- aggregate(prec.double.2[, 2:11], list(prec.double.2$desert), mean) %>% 
+  dplyr::rename(desert = Group.1)
+
+prec.double.agg.all <- merge(prec.double.agg, prec.double.agg.2, by = "desert")
+```
+
+
+## Combine interP datasets
+```{r}
+prec.extract.all <- merge(prec.extract.df, prec.extract.df.2, by = "desert") %>% 
+  group_by(desert) %>%
+  filter(n()==1) %>% 
+  unique() %>% 
+  rbind(prec.double.agg.all)
+```
+
+
+## Calculate standard deviation
+```{r}
+prec.sd <- prec.extract.all %>% 
+  mutate(interP = sd(across(where(is.numeric)))) %>% 
+  dplyr::select(desert, interP)
+```
+
+
+# Save interP datasets
+```{r}
+write.csv(prec.extract.df, here::here("./data/analysis/interp.extract.df1.csv"), row.names = FALSE)
+write.csv(prec.extract.df.2, here::here("./data/analysis/interp.extract.df2.csv"), row.names = FALSE)
+write.csv(prec.extract.all, here::here("./data/analysis/interp.extract.all.csv"), row.names = FALSE)
+write.csv(prec.sd, here::here("./data/analysis/interp.sd.csv"), row.names = FALSE)
+```
+
+
+
+# Load datasets
+```{r}
+env_pred_dataset <- read.csv(here::here("./data/analysis/env_pred_dataset.csv"), row.names = 1)
+prec.sd <- read.csv(here::here("./data/analysis/interp.sd.csv"))
+```
+
+## Merge interP with environmental dataset
+```{r}
+env_pred_dataset <- env_pred_dataset %>% 
+  rownames_to_column(var = "desert") %>% 
+  merge(prec.sd, by = "desert") %>% 
+  column_to_rownames(var = "desert")
+```
+
+
+# Save dataset
+```{r}
+write.csv(env_pred_dataset, here::here("./data/analysis/env_pred_dataset.csv"))
+```
+
+
+# Load dataset
+```{r}
+#env_pred_dataset <- read.csv(here::here("./data/analysis/env_pred_dataset.csv"), row.names = 1)
+```

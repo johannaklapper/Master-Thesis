@@ -1,0 +1,224 @@
+---
+title: "B2_NonGiftChecklists_2"
+author: "Johanna Klapper"
+date: "4/29/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The dataset from 'B1_NonGiftChecklists_1.Rmd' was processed with 'split_names_proc.R' to split the species name and authors.
+After combining all checklists from outside GIFT, there are still some entries which have to be adjusted, e.g. different entries for endemic species.
+Checklists that are already in GIFT format, but not yet in GIFT will be added to the dataset.
+Finally, the species names will be taxonomically standardized with The Plant List.
+
+
+# Load packages
+```{r}
+library(tidyverse)
+library(Taxonstand)
+```
+
+
+# Load dataset from outside GIFT
+```{r}
+dataset <- read.csv(here::here("./data/checklists/processed/data_full_procNames.csv"), header = TRUE)
+```
+
+
+# Adjust entries in endemic column: endemic - 1, not endemic - 0 and create one column which will be used to connect data + polygon
+```{r}
+dataset <- dataset %>% 
+  mutate(endemic = if_else(endemic %in% c("1", "(yes)", "yes", "endemic"), 1, 0),
+         polygon = desert)
+```
+
+
+
+# Add checklists that have already been processed (in GIFT format, not in GIFT)
+  
+## Chile
+```{r}
+chile <- read.csv(here::here("./data/checklists/original/Chile.csv"))
+```
+
+```{r}
+chile_proc <- chile %>% 
+  filter(list_ID != "NA",
+         species != "Zostera chilensis") %>% # not a desert species
+  mutate(desert = "Chile",
+         alien = NA,
+         growth_form = NA,
+         lifecycle = NA,
+         lifeform = NA,
+         liana = NA,
+         climber = NA,
+         aquatic = NA,
+         succulence = NA,
+         plant_height_min = NA,
+         plant_height_max = NA,
+         rhizome_length = NA,
+         blooming_season = NA,
+         habitat = NA,
+         species_full = NA,
+         genus = NA,
+         cf_genus = NA,
+         species_epithet = NA,
+         cf_species = NA,
+         aff_species = NA,
+         author = NA,
+         subtaxon = NA,
+         subt_author = NA,
+         hybrid = NA,
+         endemic = NA) %>%  
+  mutate_at("native", as.character) %>% 
+  rename(polygon = geo_entity_ref,
+         min_elevation = X6.1.1,
+         max_elevation = X6.1.2) %>% 
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  select(-c(X, list_ID, ref_ID.x, entity_ID, work_ID.x, questionable, quest_native, naturalized, endemic_ref, quest_end_ref, endemic_list, quest_end_list, cons_status, ref_ID.y, orig_ID, name_ID, work_ID.y, taxon_ID, X6.1.3))
+```
+
+
+## Farasan Archipelago
+```{r}
+farasan <- read.csv(here::here("./data/checklists/original/Farasan_Archipelago.csv"))
+```
+
+```{r}
+farasan_proc <- farasan %>% 
+  mutate(desert = "Farasan",
+         alien = NA,
+         growth_form = NA,
+         lifecycle = NA,
+         lifeform = NA,
+         liana = NA,
+         climber = NA,
+         aquatic = NA,
+         succulence = NA,
+         plant_height_min = NA,
+         plant_height_max = NA,
+         rhizome_length = NA,
+         blooming_season = NA,
+         habitat = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         endemic = NA) %>%  
+  mutate_at("native", as.character) %>% 
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  select(-c(list_ID, questionable, quest_native, naturalized, endemic_ref, quest_end_ref, endemic_list, quest_end_list, cons_status))
+```
+
+
+This dataset has to be divided into the different islands, since species are recorded for the different islands.
+
+```{r}
+farasan_alkabir <- subset(farasan_proc, Farasan.Al.Kabir == "1") %>% 
+  mutate(desert = "Farasan_AlKabir",
+         polygon = desert) %>% 
+  select(-c(Farasan.Al.Kabir, Sajid, Zifaf, Qummah, Dumsuq, Dushak))
+
+farasan_sajid <- subset(farasan_proc, Sajid == "1") %>% 
+  mutate(desert = "Farasan_Sajid",
+         polygon = desert) %>% 
+  select(-c(Farasan.Al.Kabir, Sajid, Zifaf, Qummah, Dumsuq, Dushak))
+
+farasan_zifaf <- subset(farasan_proc, Zifaf == "1") %>% 
+  mutate(desert = "Farasan_Zifaf",
+         polygon = desert) %>% 
+  select(-c(Farasan.Al.Kabir, Sajid, Zifaf, Qummah, Dumsuq, Dushak))
+
+farasan_qummah <- subset(farasan_proc, Qummah == "1") %>% 
+  mutate(desert = "Farasan_Qummah",
+         polygon = desert) %>% 
+  select(-c(Farasan.Al.Kabir, Sajid, Zifaf, Qummah, Dumsuq, Dushak))
+
+farasan_dumsuq <- subset(farasan_proc, Dumsuq == "1") %>% 
+  mutate(desert = "Farasan_Dumsuq",
+         polygon = desert) %>% 
+  select(-c(Farasan.Al.Kabir, Sajid, Zifaf, Qummah, Dumsuq, Dushak))
+
+farasan_dushak <- subset(farasan_proc, Dushak == "1") %>% 
+  mutate(desert = "Farasan_Dushak",
+         polygon = desert) %>% 
+  select(-c(Farasan.Al.Kabir, Sajid, Zifaf, Qummah, Dumsuq, Dushak))
+```
+
+```{r}
+write.csv(farasan_alkabir, here::here("./data/checklists/original/Farasan_AlKabir.csv"))
+write.csv(farasan_dumsuq, here::here("./data/checklists/original/Farasan_Dumsuq.csv"))
+write.csv(farasan_dushak, here::here("./data/checklists/original/Farasan_Dushak.csv"))
+write.csv(farasan_qummah, here::here("./data/checklists/original/Farasan_Qummah.csv"))
+write.csv(farasan_sajid, here::here("./data/checklists/original/Farasan_Sajid.csv"))
+write.csv(farasan_zifaf, here::here("./data/checklists/original/Farasan_Zifaf.csv"))
+```
+
+
+## India
+```{r}
+india <- readxl::read_excel(here::here("./data/checklists/original/India.xlsx"), sheet = 6)
+```
+
+```{r}
+india_proc <- india %>% 
+  mutate(desert = "India",
+         polygon = desert,
+         plant_height_min = `1.6.1`,
+         plant_height_max = `1.6.2`,
+         endemic = NA,
+         min_elevation = NA,
+         max_elevation = NA,
+         rhizome_length = NA,
+         blooming_season = NA,
+         habitat = NA,
+         liana = NA,
+         climber = NA,
+         alien = NA) %>%
+  select(-succulence) %>% 
+  rename(growth_form = `1.2.2`,
+         lifecycle = `2.1.1`,
+         succulence = `4.16.1`,
+         aquatic = `1.7.1`,
+         lifeform = Lifeform) %>%  
+  mutate_at("native", as.character) %>% 
+  mutate_at(c("min_elevation", "max_elevation"), as.numeric) %>% 
+  select(-c(list_ID, species_original, Growth_form, Lifecycle, Aquatic, parasite, orig_1, `1.6.1`, orig_2, `1.6.2`, orig_3, `1.4.2`, orig_4, orig_5, orig_6, orig_7, `1.5.1`, questionable, quest_native, naturalized, endemic_ref, quest_end_ref, endemic_list, quest_end_list, cons_status))
+```
+
+
+## Join previous dataset with new checklists and remove aquatic species
+
+```{r}
+dataset_proc <- dataset %>% 
+  bind_rows(chile_proc, farasan_alkabir, farasan_dumsuq, farasan_dushak, farasan_qummah, farasan_sajid, farasan_zifaf, india_proc) %>% 
+  filter(aquatic == "" | is.na(aquatic) | aquatic == "terrestrial")
+```
+
+
+# Harmonize species names with PlantList
+```{r}
+taxstand <- TPL(genus = dataset_proc$genus, species = dataset_proc$species_epithet, diffchar = 2, max.distance = 1)
+
+taxstand_copy <- taxstand
+
+for (i in 1:nrow(taxstand)){
+  dataset_proc$genus[which(dataset_proc$genus == taxstand$Genus[i] &
+                        dataset_proc$species_epithet == taxstand$Species[i])] <- taxstand$New.Genus[i]
+  dataset_proc$species_epithet[which(dataset_proc$genus == taxstand$Genus[i] &
+                          dataset_proc$species_epithet == taxstand$Species[i])] <- taxstand$New.Species[i]
+}
+
+
+write.csv(taxstand, here::here("./data/checklists/processed/data_taxstand.csv"))
+write.csv(taxstand_copy, here::here("./data/checklists/processed/data_taxstand_copy.csv"))
+```
+
+
+
+# Save dataset
+```{r}
+write.csv(dataset_proc, here::here("./data/checklists/processed/dataset_proc.csv"), row.names = FALSE)
+```
+

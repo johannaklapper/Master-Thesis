@@ -1,0 +1,936 @@
+---
+title: "GeneralizedLinearModel"
+author: "Johanna Klapper"
+date: "6/7/2022"
+output: html_document
+---
+
+This Markdown contains:
+- Predictor transformation
+- Comparison of poisson/negative-binomial distribution
+- Model selection
+- GLM
+- Plotting of Partial Residuals
+- Creation of output tables
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lme4)
+library(GGally)
+library(sf)
+library(vegan)
+library(kableExtra)
+library(effects)
+library(MASS)
+library(MuMIn)
+library(DHARMa)
+library(lmtest)
+```
+
+
+# Load data
+```{r}
+env_pred_dataset <- read.csv(here::here("./data/analysis/env_pred_dataset.csv"), row.names = 1)
+species <- read.csv(here::here("./data/analysis/species.csv"))
+polygons_data <- read_sf(here::here("./data/analysis/polygons_data.shp"))
+```
+
+
+# Data preparation
+
+## Remove columns not needed
+```{r}
+env_data_model <- env_pred_dataset %>% 
+  dplyr::select(-c(category, seasT_sd, seasP_sd, Alt_sd, TRI_sd)) %>% 
+  drop_na() %>% 
+  rownames_to_column() %>% 
+  dplyr::rename(desert = rowname)
+```
+
+## Create presence/absence matrix and calculate row sums
+```{r}
+species_data_bin <- species %>% 
+  dplyr::select(species, desert) %>% 
+  mutate(count = 1) %>% 
+  unique() %>% 
+  pivot_wider(names_from=species,values_from = count,values_fill = 0,) %>% 
+  as.data.frame()
+
+rownames(species_data_bin) <- species_data_bin$desert
+
+species_matrix <- species_data_bin %>% dplyr::select(-desert) 
+```
+
+```{r}
+# Species per checklist
+spec_num <- rowSums(species_matrix) %>% 
+  as.data.frame() %>% 
+  rownames_to_column() %>% 
+  dplyr::rename(desert = rowname,
+                spec = '.')
+```
+
+
+## Merge env data and species data
+```{r}
+# Join environmental data with species numbers
+model_data <- merge(env_data_model, spec_num, by = "desert") 
+
+# Join with checklist information, e.g. region, island/mainland, desert definition
+model_data <- merge(model_data, unique(polygons_data), by = "desert") %>% 
+  dplyr::select(-c(dsrt_bt, defintn, geometry)) %>% 
+  dplyr::rename(continent = contnnt) %>% 
+  distinct(desert, .keep_all = TRUE)
+```
+
+
+# Transformation
+
+```{r}
+# Determine how to transform SLMP
+hist(model_data$SLMP)
+hist(log(model_data$SLMP))
+hist(sqrt(model_data$SLMP))
+hist(log10(max(model_data$SLMP+1) - model_data$SLMP))
+slmp <- car::powerTransform(model_data$SLMP+1)
+summary(slmp)
+
+hist(model_data$SLMP^2.1)
+```
+
+```{r}
+# Transform explanatory variables, not response variable
+model_data_log <- model_data
+
+model_data_log[ , 2:12] <- log(model_data_log[ , 2:12] +1)
+model_data_log[ , 13] <- model_data_log[ , 13]^2.1
+model_data_log[ , 14] <- log(model_data_log[ , 14] +1)
+```
+
+
+# Distribution of response variable
+
+```{r}
+# Check distribution of response variable to determine model family
+library(gamlss)
+fitDist(model_data$spec, k = 2, type = "realplus", trace = FALSE, try.gamlss = TRUE)
+```
+
+```{r}
+library(fitdistrplus)
+descdist(model_data$spec, discrete = FALSE)
+```
+
+
+# Generalized Linear Model
+
+## Select only mainland checklists
+```{r}
+model_data_main <- model_data %>% 
+  filter(islnd_m == "Mainland")
+
+model_data_log_main <- model_data_log %>% 
+  filter(islnd_m == "Mainland")
+```
+
+## Determine whether to choose poisson or negative binomial distribution 
+```{r}
+glm.pois.main <- glm(spec ~ Area + Range + seasT + Temp + Prec + seasP + Alt + TRI + Soil + Temp_sd + Prec_sd + interP + SLMP + continent, data = model_data_log_main, family = poisson(link = "log"))
+
+glm.nb.main <- glm.nb(spec ~ Area + Range + seasT + Temp + Prec + seasP + Alt + TRI + Soil + Temp_sd + Prec_sd + interP + SLMP + continent, data = model_data_log_main, link = "log")
+```
+
+```{r}
+#Residual plot for Poisson regression
+p_res <- resid(glm.pois.main)
+plot(fitted(glm.pois.main), p_res, col='steelblue', pch=16,
+     xlab='Predicted Offers', ylab='Standardized Residuals', main='Poisson')
+abline(0,0)
+
+#Residual plot for negative binomial regression 
+nb_res <- resid(glm.nb.main)
+plot(fitted(glm.nb.main), nb_res, col='steelblue', pch=16,
+     xlab='Predicted Offers', ylab='Standardized Residuals', main='Negative Binomial')
+abline(0,0)
+```
+
+```{r}
+# Likelihood Ratio Test
+pchisq(2 * (logLik(glm.nb.main) - logLik(glm.pois.main)), df = 1, lower.tail = FALSE)
+```
+
+```{r}
+# Overdispersion
+
+testDispersion(glm.pois.main)
+testDispersion(glm.nb.main)
+
+performance::check_overdispersion(glm.pois.main)
+performance::check_overdispersion(glm.nb.main)
+
+plot(simulateResiduals(glm.pois.main))
+plot(simulateResiduals(glm.nb.main))
+
+model_data %>% 
+  summarize(mean = mean(spec), var = var(spec)) %>% 
+  mutate(ratio = var/mean)
+
+
+anova(glm.pois.main, glm.nb.main, test = "Chi")
+# -> chi-squared approximation
+20310.6/96
+121.7/96
+```
+
+
+
+## Model Selection
+```{r}
+options(na.action = "na.fail")
+
+mod.sel <- dredge(glm.nb.main, beta = "none")
+
+selection <- model.sel(mod.sel, rank = AIC) 
+```
+
+```{r}
+write.csv(selection, here::here("./data/results/model.selection.negbin.glm.csv"), row.names = FALSE)
+```
+
+
+```{r}
+# best model selection
+glm.sel <- glm.nb(spec ~ Area + SLMP + interP + Temp_sd + Prec_sd + Prec + continent, data = model_data_log_main, link = "log")
+summary(glm.sel)
+```
+
+
+```{r}
+# scale transformed model data to identify the most influencing variable
+model.data.log.main.scale <- model_data_log_main
+model.data.log.main.scale[2:14] <- scale(model.data.log.main.scale[2:14])
+
+glm.sel.scale <- glm.nb(spec ~ Area + SLMP + interP + Temp_sd + Prec_sd + Prec + continent, data = model.data.log.main.scale, link = "log")
+summary(glm.sel.scale)
+```
+
+
+## Compare starting and fitted model
+```{r}
+# AIC
+extractAIC(glm.nb.main)
+extractAIC(glm.sel)
+
+# Likelihood Ratio Test
+lr.test <- lrtest(glm.nb.main, glm.sel)
+lr.test
+
+# R-squared Nakagawa et al. (2017)
+MuMIn::r.squaredGLMM(glm.sel)
+
+# Pseudo R-squared
+with(summary(glm.sel), 1 - deviance/null.deviance)
+```
+
+
+## Check Residuals and Overdispersion of fitted model
+
+### DHARMa package
+```{r}
+plot(simulateResiduals(glm.sel))
+```
+
+### QQ-Plot
+```{r}
+ggplot(model_data_log_main, aes(sample = residuals(glm.sel))) +
+  stat_qq(size = 2.5, pch = 1) +
+  stat_qq_line(col = "red", size = 1.2) +
+  labs(title = "QQ Plot", x = "Expected", y = "Observed") +
+  theme_bw() +
+  theme(rect = element_rect(size = 0.2))
+
+#ggsave("qqplot.png", last_plot(), device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+### Residuals vs. Fitted
+```{r}
+ggplot(data = model_data_log_main, aes(fitted(glm.sel), residuals(glm.sel))) +
+  geom_point() +
+  geom_hline(aes(yintercept = 0), col = "red") +
+  labs(title = "Residuals vs Fitted", x = "Predicted values", y = "Residuals") +
+  theme_bw() +
+  theme(rect = element_rect(size = 0.2)) +
+  ylim(c(-1.25, 0.5))
+
+#ggsave("ResidualsvsFitted.png", last_plot(), device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+### Residuals
+```{r}
+ggplot(data = model_data_log_main, aes(residuals(glm.sel))) +
+  geom_histogram(bindwidth = 0.1) +
+  labs(title = "Distribution of Residuals", x = "Residuals", y = "Count") +
+  theme_bw() +
+  theme(rect = element_rect(size = 0.2))
+
+#ggsave("ResidualDistribution.png", last_plot(), device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+
+# Plotting
+
+## Estimates and Effects
+
+```{r}
+# Estimates plot
+est.data <- sjPlot::get_model_data(glm.sel, type = "est") %>% 
+  mutate(term = c("Area", "SLMP", "interP", "Temp_sd", "Prec_sd", "Prec", "Region North Africa", "Region North America", "Region Oceania", "Region South Africa", "Region South America"),
+         estimate = estimate)
+
+
+ggplot(data = est.data, aes(x = estimate, y = fct_relevel(term, "Region South America", "Region South Africa", "Region Oceania", "Region North America", "Region North Africa", "Prec_sd", "Temp_sd", "interP", "SLMP", "Area"), col = group)) +
+  geom_point(size = 3) +
+  geom_linerange(aes(xmin = conf.low, xmax = conf.high), size = 1) +
+  geom_vline(xintercept = 1) +
+  theme_bw() +
+  labs(y = "", x = "Estimate") +
+  theme(legend.position = "none",
+        axis.title = element_text(size = 14),
+        axis.text.y = element_text(size = 13),
+        axis.text.x = element_text(size = 13))
+
+#ggsave("Model.Estimates.png", last_plot(), device = "png", path = here::here("./data/results/"), width = 20, height = 12, units = "cm")
+```
+
+```{r}
+# Effects plot
+eff.test <- effects::Effect(mod = glm.sel, focal.predictors = c("continent"))
+eff.test$fit
+
+eff.data <- ggeffect(glm.sel, back.transform = TRUE, type = "fe")
+#eff.data <- sjPlot::get_model_data(glmm.sel, type = "eff") 
+eff.data.num <- do.call(rbind.data.frame, eff.data) %>% 
+  filter(group != "continent")
+eff.data.con <- do.call(rbind.data.frame, eff.data) %>% 
+  filter(group == "continent")
+
+
+ggplot(data = eff.data.num, aes(x = x, y = predicted, group = group)) +
+  geom_line(size = 1.2, col = "grey20") +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), size = 0.5, col = "grey20", fill = "grey80", alpha = 0.2) +
+  facet_wrap(~group, scales = "free") +
+  theme_bw() +
+  labs(y = "Predicted response", x = "") +
+  theme(legend.position = "none",
+        axis.title = element_text(size = 13),
+        axis.text.y = element_text(size = 11),
+        axis.text.x = element_text(size = 11),
+        strip.text.x = element_text(size = 12))
+
+ggplot(data = eff.data.con, aes(x = predicted, y = x)) +
+  geom_point(size = 3) +
+  geom_linerange(aes(xmin = conf.low, xmax = conf.high), size = 1) +
+  geom_vline(xintercept = 1) +
+  theme_bw() +
+  labs(y = "", x = "Estimate") +
+  theme(legend.position = "none",
+        axis.title = element_text(size = 14),
+        axis.text.y = element_text(size = 13),
+        axis.text.x = element_text(size = 13))
+
+#ggsave("PredictorEffects.png", last_plot(), device = "png", path = here::here("./data/results/"), width = 25, height = 15, units = "cm")
+```
+
+
+```{r}
+# Another possibility for effects plot
+resid.data <- sjPlot::get_model_data(glm.sel, type = "res") %>% 
+  filter(group != "continent") %>% 
+  mutate(group2 = case_when(group == "Area" ~ "1",
+                            group == "SLMP" ~ "2",
+                            group == "interP" ~ "3",
+                            group == "Temp_sd" ~ "4",
+                            group == "Prec_sd" ~ "5",
+                            group == "TRI" ~ "6",
+                            group == "Soil" ~ "7",
+                            TRUE ~ group))
+resid.data$group2 <- as.factor(resid.data$group2)
+
+
+model.data.pivot <- model_data_log_main %>% 
+  dplyr::select(c(spec, Area, SLMP, interP, Temp_sd, Prec_sd, TRI, Soil)) %>% 
+  pivot_longer(cols = 2:8) %>% 
+  mutate(Predictor = name) %>% 
+  dplyr::select(-name)
+
+part.resid <- predictorEffects(glm.sel, partial.residuals=TRUE) %>% 
+  as.data.frame() 
+
+part.resid.con <- part.resid$continent
+part.resid.con$continent <- as.character(part.resid.con$continent)
+part.resid.con <- part.resid.con %>% 
+  mutate(levels = case_when(continent == "Asia" ~ "A",
+                            continent == "North Africa" ~ "NAf",
+                            continent == "North America" ~ "NAm",
+                            continent == "Oceania" ~ "O",
+                            continent == "South Africa" ~ "SAf",
+                            continent == "South America" ~ "SAm",
+                            TRUE ~ continent))
+
+
+part.resid.con.points <- model_data_log_main %>% 
+  mutate(levels = case_when(continent == "Asia" ~ "A",
+                            continent == "North Africa" ~ "NAf",
+                            continent == "North America" ~ "NAm",
+                            continent == "Oceania" ~ "O",
+                            continent == "South Africa" ~ "SAf",
+                            continent == "South America" ~ "SAm",
+                            TRUE ~ continent))
+
+part.resid.num <- lapply(part.resid[1:5], function(x) {
+  mutate(x, Predictor = rep(colnames(x[1]), times = 50))
+})
+
+part.resid.num <- lapply(part.resid.num, function(x) {
+  dplyr::rename(x, value = colnames(x[1]))
+})
+
+part.resid.df <- do.call(rbind.data.frame, part.resid.num)
+
+eff.term <- c("Area", "SLMP", "interP", "Temp_sd", "Prec_sd")
+
+eff.plot <- lapply(1:5, function(i) {
+  
+  part.resid.df.fil <- part.resid.df %>% 
+    filter(Predictor == eff.term[i])
+  model.data.pivot.fil <- model.data.pivot %>% 
+    filter(Predictor == eff.term[i])
+  resid.data.fil <- resid.data %>% 
+    filter(group2 == eff.term[i])
+  
+partial.residuals <- ggplot(data = part.resid.df.fil, aes(x = value, y = fit)) +
+  geom_line(col = "red3", size = 1.2) +
+  #geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, col = "transparent", fill = "red", lwd = 0.5) +
+  geom_point(data = model.data.pivot.fil, aes(y = spec, x = value), size = 1.5, col = "dodgerblue4", alpha = 0.5) +
+  #geom_smooth(data = model.data.pivot, method = "loess", se = FALSE, aes(x = value, y = spec), col = "dodgerblue4") +
+  theme_bw() +
+  #facet_wrap(~Predictor, scales = "free", nrow = 2,
+    #strip.position = "bottom") +  # move strip position
+  #theme(
+    #strip.placement = "outside",   # format to look like title
+    #strip.background = element_blank(),
+    #strip.text.x = element_text(size = 12)) +
+  labs(x = eff.term[i], y = "") +
+  theme(axis.text = element_text(size = 13),
+        axis.title = element_text(size = 14))
+
+})
+
+eff.plot[1]
+
+
+part.plot.con <- ggplot(data = part.resid.con) +
+  geom_point(aes(x = levels, y = fit), col = "red3", size = 1.5) +
+  geom_errorbar(aes(x = levels, y = fit, ymin = lower, ymax = upper), width = 0.5, col = "red3", size = 1.2) +
+  geom_point(data = part.resid.con.points, aes(x = levels, y = spec), col = "dodgerblue4", alpha = 0.4, size = 1.5) +
+  theme_bw() +
+  labs(x = "Region", y = "") +
+  theme(axis.title = element_text(size = 14),
+        axis.text = element_text(size = 13))
+part.plot.con
+
+pred.eff.plot <- cowplot::plot_grid(eff.plot[[1]], eff.plot[[2]], eff.plot[[3]], eff.plot[[4]], eff.plot[[5]], part.plot.con, ncol = 3) +
+  cowplot::draw_label("Predictor Effects", x=  0, y=0.5, vjust= 1.5, angle=90, size = 17)
+pred.eff.plot
+
+#ggsave("Predictor.Effects.png", pred.eff.plot, device = "png", path = here::here("./data/results/"), width = 25, height = 13, units = "cm")
+```
+
+
+
+## Partial Residual Plots
+
+
+### not properly working, but could be an idea ###
+```{r}
+sjPlot::plot_model(glm.sel, rm.terms = "continent", type = "resid", line.size = 2.5) +
+  theme_bw() +
+  theme(axis.text = element_text(size = 11),
+        axis.title = element_text(size = 11),
+        strip.text.x = element_text(size = 11)) +
+  labs(y = "Partial Residuals")
+
+#ggsave("MarginalEffects.num.png", last_plot(), device = "png", path = here::here("./data/results/"), width = 23, height = 15, units = "cm")
+
+data.resid <- ggplot_build(last_plot()) # extracting data from plot_model()
+data.1 <- data.resid$data[[1]]
+data.2 <- data.resid$data[[2]]
+
+resid.data <- sjPlot::get_model_data(glm.sel, type = "res") %>% 
+  filter(group != "continent") %>% 
+  mutate(group2 = case_when(group == "Area" ~ "1",
+                            group == "SLMP" ~ "2",
+                            group == "interP" ~ "3",
+                            group == "Temp_sd" ~ "4",
+                            group == "Prec_sd" ~ "5",
+                            group == "TRI" ~ "6",
+                            group == "Soil" ~ "7",
+                            TRUE ~ group))
+resid.data$group2 <- as.factor(resid.data$group2)
+
+
+
+label.pred <- c("Area", "SLMP", "interP", "Temp_sd", "Prec_sd")
+
+plot <- lapply(1:5, function(i) {
+  
+  data.1.fil <- data.1 %>% 
+    filter(PANEL == i)
+  data.2.fil <- data.2 %>% 
+    filter(PANEL == i)
+  resid.data.fil <- resid.data %>% 
+    filter(group2 == i)
+  
+  plot <- ggplot() +
+    geom_point(data = resid.data.fil, aes(x = x, y = y), size = 1.5, col = "dodgerblue4", alpha = 0.6) +
+    #geom_line(data = data.2.fil, aes(x = x, y = y), col = "dodgerblue4", size = 1.2) +
+    geom_line(data = data.1.fil, aes(x = x, y = y), col = "red3", size = 1.2) +
+    theme_bw() +
+    xlim(min(resid.data.fil$x), max(resid.data.fil$x)) +
+    ylim(min(data.2$y), max(data.2$y) + 0.1) +
+    labs(x = label.pred[i], y = "") +
+    theme(axis.title = element_text(size = 13),
+          axis.text = element_text(size = 12))
+
+})
+
+plot[1]
+
+boxplot.data <- model_data_log_main
+boxplot.data <- boxplot.data %>% 
+  mutate(levels = case_when(continent == "Asia" ~ "A",
+                            continent == "North Africa" ~ "NAf",
+                            continent == "North America" ~ "NAm",
+                            continent == "Oceania" ~ "O",
+                            continent == "South Africa" ~ "SAf",
+                            continent == "South America" ~ "SAm",
+                            TRUE ~ continent))
+levels(boxplot.data$levels) <- c("A", "NAf", "NAm", "O", "SAf", "SAm")
+
+box.con <- ggplot(data = boxplot.data) +
+  geom_boxplot(aes(levels, resid(glm.sel))) +
+  ylim(min(data.2$y), max(data.2$y) + 0.1) +
+  theme_bw() +
+  labs(x = "Region", y = "") +
+  theme(axis.title = element_text(size = 13),
+        axis.text = element_text(size = 12))
+box.con
+
+part.resid.plot <- cowplot::plot_grid(plot[[1]], plot[[2]], plot[[3]], plot[[4]], plot[[5]], box.con, ncol = 3) +
+  cowplot::draw_label("Partial Residuals", x=  0, y=0.5, vjust= 1.5, angle=90, size = 17)
+part.resid.plot
+
+#ggsave("Partial.Residuals.num.png", part.resid.plot, device = "png", path = here::here("./data/results/"), width = 25, height = 19, units = "cm")
+```
+
+
+
+### Working ###
+
+#### For selected variables
+```{r}
+part.res.df <- residuals(glm.sel, type = "partial") %>% 
+  as.data.frame() 
+names(part.res.df) <- c("Area_resid", "SLMP_resid", "interP_resid", "Temp_sd_resid", "Prec_sd_resid", "Prec_resid", "continent_resid")
+
+names.pred <- c("Area", "SLMP", "interP", "Temp_sd", "Prec_sd", "Prec", "continent")
+units.pred <- c(bquote("[" ~ m^2 ~ "]"), "[%]", "[mm]", "[°C]", "[mm]", "[mm]", "")
+
+x.axes.var.sel <- c("Area", "SLMP", "interP", "Temp_sd",  "Prec_sd", "Prec", "continent")
+
+
+part.res.df <- cbind(part.res.df, model_data_log_main)
+
+part.res.df <- part.res.df %>% 
+  mutate(levels = case_when(continent == "Asia" ~ "A",
+                            continent == "North Africa" ~ "NAf",
+                            continent == "North America" ~ "NAm",
+                            continent == "Oceania" ~ "O",
+                            continent == "South Africa" ~ "SAf",
+                            continent == "South America" ~ "SAm",
+                            TRUE ~ continent))
+```
+
+```{r}
+part.res.1 <- ggplot(data = part.res.df, aes(x = Area, y = Area_resid)) +
+    geom_point(pch = 1, col = "grey50", size = 2.3, stroke = 0.8) +
+    stat_smooth(method = "lm", se = FALSE, col = "dodgerblue4", size = 1.3, formula = y ~ x) +
+    labs(x = bquote("log(Area) ["~m^2~"]"), y = "") +
+    theme_bw() +
+    theme(axis.title = element_text(size = 14),
+          axis.text = element_text(size = 11)) +
+   ylim(-2, 2.2)
+
+part.res.2 <- ggplot(data = part.res.df, aes(x = SLMP, y = SLMP_resid)) +
+    geom_point(pch = 1, col = "grey50", size = 2.3, stroke = 0.8) +
+    stat_smooth(method = "lm", se = FALSE, col = "dodgerblue4", size = 1.3, formula = y ~ x) +
+    labs(x = bquote("SLMP" ^2.1 ~"[%]"), y = "") +
+    theme_bw() +
+    theme(axis.title = element_text(size = 14),
+          axis.text = element_text(size = 11)) +
+   ylim(-2, 2.2)
+
+
+part.res.plot <- lapply(3:6, function(i) {
+  
+  sel.var <- part.res.df %>% 
+    dplyr::select(x.axes.var.sel[i])
+  
+  ggplot(data = part.res.df, aes(x = sel.var[,1], y = part.res.df[, i])) +
+    geom_point(pch = 1, col = "grey50", size = 2.3, stroke = 0.8) +
+    stat_smooth(method = "lm", se = FALSE, col = "dodgerblue4", size = 1.3, formula = y ~ x) +
+    labs(x = paste0("log(", names.pred[i], ")", " ", units.pred[i]), y = "") +
+    theme_bw() +
+    theme(axis.title = element_text(size = 14),
+          axis.text = element_text(size = 11))  +
+   ylim(-2, 2.2)
+})
+
+part.res.plot[1]
+```
+
+
+```{r}
+# Boxplots for regions
+box.con <- ggplot(data = part.res.df) +
+  geom_boxplot(aes(levels, continent_resid, col = levels), size = 0.7) +
+  scale_color_brewer(palette = "Dark2") +
+  theme_bw() +
+  labs(x = "", y = "") +
+  theme(axis.title = element_text(size = 14, color = "black"),
+        axis.text.x = element_text(size = 14, color = "black"),
+        axis.text.y = element_text(size = 11),
+        legend.position = "none") +
+   ylim(-2, 2.2)
+box.con
+```
+
+
+```{r}
+part.res.plot.com <- cowplot::plot_grid(part.res.1, part.res.2, part.res.plot[[1]], part.res.plot[[2]], part.res.plot[[3]],  part.res.plot[[4]], box.con, ncol = 3) +
+  cowplot::draw_label("Partial Residuals", x=  0, y=0.5, vjust= 1.5, angle=90, size = 15)
+part.res.plot.com
+```
+
+
+```{r}
+ggsave("partial.residuals.png", part.res.plot.com, device = "png", path = here::here("./data/results/"), width = 25, height = 17, units = "cm")
+```
+
+
+
+#### For all predictor variables
+```{r}
+part.res.df.all <- residuals(glm.nb.main, type = "partial") %>% 
+  as.data.frame() 
+names(part.res.df.all) <- c("Area_resid", "Range_resid", "seasT_resid", "Temp_resid", "Prec_resid", "seasP_resid", "Alt_resid", "TRI_resid", "Soil_resid",  "Temp_sd_resid", "Prec_sd_resid",  "interP_resid", "SLMP_resid", "continent_resid")
+
+names.pred.all <- c("Area", "Range", "seasT", "Temp", "Prec", "seasP", "Alt", "TRI", "Soil", "Temp_sd", "Prec_sd",  "interP", "SLMP", "continent")
+
+units.pred.all <- c(bquote("[" ~ m^2 ~ "]"), "[m]", "[°C]", "[°C]", "[mm]", "[mm]", "[m]", "[m]", "[ ]", "[°C]", "[mm]",  "[mm]", "[%]", "")
+
+
+
+x.axes.var <- c("Area", "Range", "seasT", "Temp", "Prec", "seasP", "Alt", "TRI", "Soil", "Temp_sd", "Prec_sd",  "interP", "SLMP", "continent")
+
+part.res.df.all <- cbind(part.res.df.all, model_data_log_main)
+
+part.res.df.all <- part.res.df.all %>% 
+  mutate(levels = case_when(continent == "Asia" ~ "A",
+                            continent == "North Africa" ~ "NAf",
+                            continent == "North America" ~ "NAm",
+                            continent == "Oceania" ~ "O",
+                            continent == "South Africa" ~ "SAf",
+                            continent == "South America" ~ "SAm",
+                            TRUE ~ continent))
+```
+
+
+```{r}
+part.res.all.1 <- ggplot(data = part.res.df.all, aes(x = Area, y = Area_resid)) +
+    geom_point(pch = 1, col = "grey50", size = 2.3, stroke = 0.8) +
+    stat_smooth(method = "lm", se = FALSE, col = "dodgerblue4", size = 1.3, formula = y ~ x) +
+    labs(x = expression(bold(paste("log(Area) [", m^2, "]"))), y = "") +
+    theme_bw() +
+    theme(axis.title.y = element_text(size = 14),
+          axis.title.x = element_text(size = 14, face="bold"),
+          axis.text = element_text(size = 11)) +
+   ylim(-2, 2.2)
+
+part.res.plot.all <- lapply(2:12, function(i) {
+ 
+  sel.var <- part.res.df.all %>% 
+    dplyr::select(x.axes.var[i])
+   
+  ggplot(data = part.res.df.all, aes(x = sel.var[,1], y = part.res.df.all[, i])) +
+    geom_point(pch = 1, col = "grey50", size = 2.3, stroke = 0.8) +
+    stat_smooth(method = "lm", se = FALSE, col = "dodgerblue4", size = 1.3, formula = y ~ x) +
+    labs(x = paste0("log(", names.pred.all[i], ")", " ", units.pred.all[i]), y = "") +
+    theme_bw() +
+    theme(axis.title = element_text(size = 14),
+          axis.text = element_text(size = 11)) +
+   ylim(-2, 2.2)
+})
+
+part.res.plot.all[1]
+
+
+part.res.all.13 <- ggplot(data = part.res.df.all, aes(x = SLMP, y = SLMP_resid)) +
+    geom_point(pch = 1, col = "grey50", size = 2.3, stroke = 0.8) +
+    stat_smooth(method = "lm", se = FALSE, col = "dodgerblue4", size = 1.3, formula = y ~ x) +
+    labs(x = expression(bold(SLMP^2.1)), y = "") +
+    theme_bw() +
+    theme(axis.title.y = element_text(size = 14),
+          axis.title.x = element_text(size = 14, face="bold"),
+          axis.text = element_text(size = 11)) +
+   ylim(-2, 2.2)
+```
+
+
+```{r}
+# Making x-axis of retained variables bold
+part.res.plot.all[[4]] <- part.res.plot.all[[4]] +
+  theme(axis.title.x = element_text(size = 14, face="bold"))
+
+part.res.plot.all[[9]] <- part.res.plot.all[[9]] +
+  theme(axis.title.x = element_text(size = 14, face="bold"))
+
+part.res.plot.all[[10]] <- part.res.plot.all[[10]] +
+  theme(axis.title.x = element_text(size = 14, face="bold"))
+
+part.res.plot.all[[11]] <- part.res.plot.all[[11]] +
+  theme(axis.title.x = element_text(size = 14, face="bold"))
+```
+
+
+```{r}
+# boxplots for regions
+box.con <- ggplot(data = part.res.df.all) +
+  geom_boxplot(aes(levels, continent_resid, col = levels), size = 0.7) +
+  scale_color_brewer(palette = "Dark2") +
+  theme_bw() +
+  labs(x = "", y = "") +
+  theme(axis.title = element_text(size = 14),
+        axis.text.x = element_text(size = 14, color = "black"),
+        axis.text.y = element_text(size = 11),
+        legend.position = "none") +
+   ylim(-2, 2.2)
+box.con
+```
+
+
+```{r}
+part.res.plot.com.all <- cowplot::plot_grid(part.res.all.1, part.res.plot.all[[2]], part.res.plot.all[[3]], part.res.plot.all[[4]], part.res.plot.all[[5]],  part.res.plot.all[[6]], part.res.plot.all[[7]], part.res.plot.all[[8]], part.res.plot.all[[9]], part.res.plot.all[[10]], part.res.plot.all[[11]], part.res.plot.all[[1]], part.res.all.13, box.con, ncol = 3) +
+  cowplot::draw_label("Partial Residuals", x=  0, y=0.5, vjust= 1.5, angle=90, size = 15)
+part.res.plot.com.all
+```
+
+
+```{r}
+ggsave("partial.residuals.all.png", part.res.plot.com.all, device = "png", path = here::here("./data/results/"), width = 24, height = 27, units = "cm")
+```
+
+
+
+# Creating output tables
+
+## Final model
+```{r}
+# Extracting data from model summary and adjusting column and row names
+glm.sel.df <- cbind(coef(summary(glm.sel))[, "Estimate"], coef(summary(glm.sel))[, "Std. Error"], coef(summary(glm.sel))[, "Pr(>|z|)"]) %>% 
+  as.data.frame()
+
+colnames(glm.sel.df) <- c("Estimate", "Std. Error", "p")
+
+glm.sel.df <- glm.sel.df %>% 
+  rownames_to_column(var = "region") %>% 
+  mutate(region = c("(Intercept)", "log(Area)", "SLMP<sup>2.1</sup>", "log(interP)", "log(Temp_sd)", "log(Prec_sd)", "log(Prec)", "Region North Africa", "Region North America", "Region Oceania", "Region South Africa", "Region South America")) 
+
+glm.sel.df <- glm.sel.df %>% 
+  column_to_rownames(var = "region")
+
+Asia <- c("Region Asia", rep("-", 4)) %>% 
+  as.vector()
+
+levels <- c("(Intercept)", "log(Area)", "SLMP<sup>2.1</sup>", "log(interP)", "log(Temp_sd)", "log(Prec_sd)", "log(Prec)", "Region Asia", "Region North Africa", "Region North America", "Region Oceania", "Region South Africa", "Region South America")
+```
+
+
+```{r}
+# Rounding values to 2 digits
+glm.sel.df$p <- as.numeric(glm.sel.df$p)
+
+options(scipen = -1, digits = 2)
+glm.sel.df$Estimate <- format(glm.sel.df$Estimate)
+glm.sel.df$p <- format(glm.sel.df$p)
+
+options(scipen = -1, digits = 1)
+glm.sel.df$`Std. Error` <- format(glm.sel.df$`Std. Error`)
+
+glm.sel.df$p <- as.numeric(glm.sel.df$p)
+```
+
+
+```{r}
+# Adding information about significance levels
+glm.sel.df <- glm.sel.df %>% 
+  mutate(' ' = case_when(glm.sel.df$p <= 0.001 ~ "***" ,
+                         glm.sel.df$p <= 0.01 & p > 0.001 ~ "**",
+                         glm.sel.df$p <= 0.05 & p > 0.01 ~ "*",
+                         glm.sel.df$p <= 0.1 & p > 0.05 ~ ".",
+                         glm.sel.df$p <= 1 & p > 0.1 ~ "",
+                         TRUE ~ ""))
+```
+
+```{r}
+# Significant values in bold
+glm.sel.df$p <- ifelse(
+  glm.sel.df$p < 0.05,
+  cell_spec(glm.sel.df$p, bold = T),
+  cell_spec(glm.sel.df$p, bold = F)
+)
+
+
+glm.sel.df <- glm.sel.df %>% 
+  dplyr::rename(`p-value` = p)
+```
+
+
+```{r}
+# Adding Asia (first level of categorical variable) to output table
+glm.sel.df <- glm.sel.df %>% 
+  rownames_to_column(var = "region")
+glm.sel.df <- rbind(glm.sel.df, Asia)
+glm.sel.df <- glm.sel.df[match(levels, glm.sel.df$region), ] 
+rownames(glm.sel.df) <- NULL
+glm.sel.df <- glm.sel.df %>% 
+  column_to_rownames(var = "region")
+```
+
+
+```{r}
+# Creating table with kableExtra
+options(knitr.kable.NA = '-')
+
+table <- glm.sel.df %>% 
+  kable("html", escape = F, table.attr = "style = \"color: black;\"") %>% 
+  kable_styling(font_size = 14, html_font = "Cambria", full_width = F, htmltable_class = "lightable-classic-2") %>% 
+  add_footnote("Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1") 
+table
+```
+
+```{r}
+save_kable(table, file = here::here("./data/results/glm.final.output.jpg"), self_contained = F, zoom = 2, bs_theme = "flatly")
+```
+
+
+
+## Scaled model
+```{r}
+# Extracting data from model summary and adjusting column and row names
+glm.sel.scale.df <- cbind(coef(summary(glm.sel.scale))[, "Estimate"], coef(summary(glm.sel.scale))[, "Std. Error"], coef(summary(glm.sel.scale))[, "Pr(>|z|)"]) %>% 
+  as.data.frame() 
+
+colnames(glm.sel.scale.df) <- c("Estimate", "Std. Error", "p")
+
+glm.sel.scale.df <- glm.sel.scale.df %>% 
+  rownames_to_column(var = "region") %>% 
+  mutate(region = c("(Intercept)", "z.log(Area)", "z.SLMP<sup>2.1</sup>", "z.log(interP)", "z.log(Temp_sd)", "z.log(Prec_sd)", "z.log(Prec)", "Region North Africa", "Region North America", "Region Oceania", "Region South Africa", "Region South America")) 
+
+glm.sel.scale.df <- glm.sel.scale.df %>% 
+  column_to_rownames(var = "region")
+
+
+Asia <- c("Region Asia", rep("-", 4)) %>% 
+  as.vector()
+
+levels.scale <- c("(Intercept)", "z.log(Area)", "z.SLMP<sup>2.1</sup>", "z.log(interP)", "z.log(Temp_sd)", "z.log(Prec_sd)", "z.log(Prec)", "Region Asia", "Region North Africa", "Region North America", "Region Oceania", "Region South Africa", "Region South America")
+```
+
+
+```{r}
+# Rounding values
+glm.sel.scale.df$p <- as.numeric(glm.sel.scale.df$p)
+
+options(scipen = -1, digits = 2)
+glm.sel.scale.df$Estimate <- format(glm.sel.scale.df$Estimate)
+glm.sel.scale.df$p <- format(glm.sel.scale.df$p)
+
+options(scipen = -1, digits = 1)
+glm.sel.scale.df$`Std. Error` <- format(glm.sel.scale.df$`Std. Error`)
+
+glm.sel.scale.df$p <- as.numeric(glm.sel.scale.df$p)
+```
+
+
+```{r}
+# Adding information about significance level
+glm.sel.scale.df <- glm.sel.scale.df %>% 
+  mutate(' ' = case_when(glm.sel.scale.df$p <= 0.001 ~ "***" ,
+                         glm.sel.scale.df$p <= 0.01 & p > 0.001 ~ "**",
+                         glm.sel.scale.df$p <= 0.05 & p > 0.01 ~ "*",
+                         glm.sel.scale.df$p <= 0.1 & p > 0.05 ~ ".",
+                         glm.sel.scale.df$p <= 1 & p > 0.1 ~ "",
+                         TRUE ~ ""))
+
+glm.sel.scale.df <- glm.sel.scale.df %>% 
+  mutate(p = ifelse(p == 0, "< 2e-16", p))
+
+glm.sel.scale.df$p[2:12] <- as.numeric(glm.sel.scale.df$p[2:12])
+```
+
+```{r}
+# Significant values in bold
+glm.sel.scale.df$p <- ifelse(
+  glm.sel.scale.df$` ` %in% c("", "."),
+  cell_spec(glm.sel.scale.df$p, bold = F),
+  cell_spec(glm.sel.scale.df$p, bold = T)
+)
+
+glm.sel.scale.df <- glm.sel.scale.df %>% 
+  dplyr::rename(`p-value` = p)
+```
+
+
+```{r}
+# Adding Asia (first level of categorical variable) to output table
+glm.sel.scale.df <- glm.sel.scale.df %>% 
+  rownames_to_column(var = "region")
+glm.sel.scale.df <- rbind(glm.sel.scale.df, Asia)
+glm.sel.scale.df <- glm.sel.scale.df[match(levels.scale, glm.sel.scale.df$region), ] 
+rownames(glm.sel.scale.df) <- NULL
+glm.sel.scale.df <- glm.sel.scale.df %>% 
+  column_to_rownames(var = "region")
+```
+
+
+```{r}
+# Creating table with kableExtra
+options(knitr.kable.NA = '-')
+
+table.glm.sel <- glm.sel.scale.df %>% 
+  kable("html", escape = F, table.attr = "style = \"color: black;\"") %>% 
+  kable_styling(font_size = 14, html_font = "Cambria", full_width = F, htmltable_class = "lightable-classic-2") %>% 
+  add_footnote("Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1")
+table.glm.sel
+```
+
+
+```{r}
+save_kable(table.glm.sel, file = here::here("./data/results/glm.scale.output.jpg"), self_contained = F, density = 600, zoom = 3, bs_theme = "flatly")
+```
