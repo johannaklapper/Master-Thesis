@@ -620,7 +620,7 @@ ggsave("nmds.shepard.png", last_plot(), device = "png", path = here::here("./dat
 ```{r}
 fig.31 <- ggplot() +
   geom_point(data = spec.NMDS.species, aes(x = MDS1, y = MDS2), pch = 1, alpha = 0.3, size = 2.5, stroke = 1.1) +
-  geom_point(data = spec.NMDS.sites.con, aes(x = MDS1, y = MDS2, fill = contnnt), pch = 24, size = 3.5, col = "transparent") +
+  geom_point(data = spec.NMDS.sites.con, aes(x = MDS1, y = MDS2, fill = contnnt), pch = 24, size = 4, col = "transparent") +
   scale_fill_brewer(palette = "Dark2") +
   labs(fill = "Region", x = "NMDS 1", y = "NMDS 2") +
   theme_bw() +
@@ -631,6 +631,7 @@ fig.31 <- ggplot() +
         axis.title = element_text(size = 14),
         axis.text = element_text(size = 13)) +
   guides(fill=guide_legend(ncol=2, keywidth = 0.6, keyheight = 0.6))
+fig.31
 ```
 
 
@@ -653,7 +654,7 @@ fig.32 <- ggplot() +
   labs(x = "NMDS 1", y = "NMDS 2", fill = "endemic in", col = "") +
   theme_bw() +
   theme(legend.text = element_text(size = 15),
-        legend.position = c(0.77, 0.13),
+        legend.position = c(0.22, 0.13),
         legend.box.background = element_rect(colour = "black"),
         legend.spacing.y = unit(0.01, 'cm'),
         legend.key.size = unit(0.4, "cm"),
@@ -709,7 +710,7 @@ fig.34
 
 #### Save plots
 ```{r}
-ggsave("figure3a.png", fig.31, device = "png", path = here::here("./data/results/"), width = 22, height = 15, units = "cm")
+ggsave("figure3a.png", fig.31, device = "png", path = here::here("./data/results/"), width = 23, height = 15, units = "cm")
 ggsave("figure3b.png", fig.32, device = "png", path = here::here("./data/results/"), width = 22, height = 15, units = "cm")
 ggsave("figure3c.png", fig.33, device = "png", path = here::here("./data/results/"), width = 22, height = 15, units = "cm")
 ggsave("figure3d.png", fig.34, device = "png", path = here::here("./data/results/"), width = 22, height = 15, units = "cm")
