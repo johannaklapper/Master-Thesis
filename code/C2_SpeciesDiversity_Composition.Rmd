@@ -675,9 +675,9 @@ fig.33 <- ggplot(spec.NMDS.sites.con) +
   scale_fill_brewer(palette = "Dark2") +
   scale_color_brewer(palette = "Dark2") +
   scale_shape_manual(values = c(2, 24)) +
-  labs(x = "NMDS 1", y = "NMDS 2") +
+  labs(x = "NMDS 1", y = "NMDS 2", fill = "Region", col = "Region") +
   theme_bw() +
-  theme(legend.title = element_blank(),
+  theme(legend.title = element_text(size = 15),
         legend.text = element_text(size = 15),
         legend.position = c(0.23, 0.12),
         legend.box.background = element_rect(colour = "black"),
